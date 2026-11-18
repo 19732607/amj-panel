@@ -6,7 +6,7 @@
 const SB='https://biwjrbcfupmbpoxnrolt.supabase.co', KEY='sb_publishable_ywkQpKdfMksufdqWkv-fyA_OtcxTXEm';
 const TZ='Europe/Madrid', POLL=15000, PAGE=100, MAXPAGES=5, STORE='amj.panel.session';
 const $=id=>document.getElementById(id);
-let session=null, TEST=new Set(), T=null, M=null, P=null, RH=null, payT='', sec='ordenes', kpiDays=30, O=[], prevRev={}, view='all', lastOk=0, timer=null, loading=false;
+let session=null, TEST=new Set(), T=null, M=null, P=null, RH=null, payT='', sec='ordenes', kpiDays='all', kpiFrom='', kpiTo='', RV=null, O=[], prevRev={}, view='all', lastOk=0, timer=null, loading=false;
 
 /* ---------- sesión ---------- */
 function storage(){ try{ return localStorage.getItem(STORE)?localStorage:sessionStorage }catch(e){ return null } }
@@ -74,12 +74,13 @@ async function load(){
     let all=[], before=null;
     for(let p=0;p<MAXPAGES;p++){ const rows=await rpc('amj_admin_orders',{p_filter:'todas',p_before:before,p_limit:PAGE}); all=all.concat(rows);
       if(rows.length<PAGE) break; before=rows[rows.length-1].reference;
-      const oldest=rows[rows.length-1].created_at; if(Date.now()-new Date(oldest)>45*864e5) break; }
+    }
     const fresh=normalize(all), changed=new Set();
     if(O.length) fresh.forEach(o=>{ if(prevRev[o.id]!==o.rev) changed.add(o.id) });
     prevRev={}; fresh.forEach(o=>prevRev[o.id]=o.rev); O=fresh; computeTags();
     try{ T=await rpc('amj_admin_technicians',{}) }catch(e){ if(e.message==='ACCESS_DENIED') throw e }
     try{ M=await rpc('amj_admin_materials_pending',{}) }catch(e){ if(e.message==='ACCESS_DENIED') throw e }
+    try{ RV=await rpc('amj_admin_reviews',{}) }catch(e){ if(e.message==='ACCESS_DENIED') throw e }
     if(sec==='pagos'||P===null){ try{ P=await rpc('amj_admin_payouts',{}) }catch(e){ if(e.message==='ACCESS_DENIED') throw e } }
     if(sec==='materiales'||RH===null){ try{ RH=await rpc('amj_admin_receipts_history',{p_days:60}) }catch(e){ if(e.message==='ACCESS_DENIED') throw e } }
     lastOk=Date.now(); $('err').hidden=true; render(changed); fillFilters(); renderSec();
@@ -144,6 +145,48 @@ function openDr(o){ const d=$('dr'); d.innerHTML=''; const h=el('div','dh');
   d.append(h,c); d.classList.add('open'); $('sh').classList.add('on') }
 function closeDr(){ $('dr').classList.remove('open'); $('sh').classList.remove('on') }
 
+/* ---------- gráficos (SVG propio, sin librerías externas) ---------- */
+const PAL=['#13385f','#1bb3d9','#16a36a','#e0a100','#d33','#7b5cd6','#0b7593','#b0581b','#556070','#c2185b'];
+const NS='http://www.w3.org/2000/svg';
+function sv(tag,attrs,txt){ const e=document.createElementNS(NS,tag); for(const k in attrs) e.setAttribute(k,attrs[k]); if(txt!=null) e.textContent=txt; return e }
+function chartCard(title){ const c=el('div','card'); c.style.marginTop='14px'; c.append(el('h3',null,title)); const b=el('div'); b.style.padding='12px 14px'; c.append(b); return [c,b] }
+function legend(items){ const l=el('div'); l.style.cssText='display:flex;gap:14px;flex-wrap:wrap;font-size:12px;margin-bottom:6px'; items.forEach(([n,c])=>{ const s=el('span'); s.innerHTML=''; const d=el('span'); d.style.cssText='display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:5px;background:'+c; s.append(d,n); l.append(s) }); return l }
+function lineChart(title,days,series){
+  const [c,b]=chartCard(title); const keys=Object.keys(days).sort();
+  if(!keys.length){ b.append(el('div','empty','Sin datos en el periodo.')); return c }
+  // rellenar días sin datos
+  const all=[]; for(let d=new Date(keys[0]+'T12:00:00Z'); d<=new Date(keys[keys.length-1]+'T12:00:00Z'); d=new Date(d.getTime()+864e5)) all.push(d.toISOString().slice(0,10));
+  const W=1000,H=240,L=34,Bm=26,T=10, max=Math.max(1,...all.map(k=>Math.max(...series.map(([s])=>(days[k]||{})[s]||0))));
+  const x=i=>L+(all.length===1?0:(i*(W-L-10)/(all.length-1))), y=v=>T+(H-T-Bm)*(1-v/max);
+  const svg=sv('svg',{viewBox:`0 0 ${W} ${H}`,width:'100%',style:'display:block'});
+  for(let g=0;g<=4;g++){ const v=Math.round(max*g/4); svg.append(sv('line',{x1:L,x2:W-10,y1:y(v),y2:y(v),stroke:'#e3e8ef'}), sv('text',{x:L-6,y:y(v)+4,'text-anchor':'end','font-size':10,fill:'#6b7686'},v)) }
+  const step=Math.max(1,Math.ceil(all.length/14)); all.forEach((k,i)=>{ if(i%step===0) svg.append(sv('text',{x:x(i),y:H-8,'text-anchor':'middle','font-size':10,fill:'#6b7686'},new Date(k+'T12:00:00Z').toLocaleDateString('es-ES',{day:'2-digit',month:'short'}))) });
+  series.forEach(([s,,col])=>{ svg.append(sv('polyline',{points:all.map((k,i)=>x(i)+','+y((days[k]||{})[s]||0)).join(' '),fill:'none',stroke:col,'stroke-width':2,'stroke-linejoin':'round'})) });
+  all.forEach((k,i)=>{ const r=sv('rect',{x:x(i)-(W/all.length)/2,y:T,width:W/all.length,height:H-T-Bm,fill:'transparent'}); r.append(sv('title',{},new Date(k+'T12:00:00Z').toLocaleDateString('es-ES')+' · '+series.map(([s,n])=>n+': '+((days[k]||{})[s]||0)).join(' · '))); svg.append(r) });
+  b.append(legend(series.map(([,n,col])=>[n,col])),svg); return c }
+function donut(title,entries){
+  const [c,b]=chartCard(title); c.style.marginTop='0'; const tot=entries.reduce((a,[,v])=>a+v,0);
+  if(!tot){ b.append(el('div','empty','Sin datos en el periodo.')); return c }
+  const svg=sv('svg',{viewBox:'0 0 200 200',width:'180',height:'180',style:'display:block;margin:0 auto'}); let a0=-Math.PI/2;
+  entries.forEach(([k,v],i)=>{ const a1=a0+2*Math.PI*v/tot, large=a1-a0>Math.PI?1:0, R=90,r=58;
+    const p=(ang,rad)=>[100+rad*Math.cos(ang),100+rad*Math.sin(ang)];
+    const [x0,y0]=p(a0,R),[x1,y1]=p(a1,R),[x2,y2]=p(a1,r),[x3,y3]=p(a0,r);
+    const path=entries.length===1?`M100 10 A90 90 0 1 1 99.99 10 L99.99 42 A58 58 0 1 0 100 42 Z`:`M${x0} ${y0} A${R} ${R} 0 ${large} 1 ${x1} ${y1} L${x2} ${y2} A${r} ${r} 0 ${large} 0 ${x3} ${y3} Z`;
+    const s=sv('path',{d:path,fill:PAL[i%PAL.length],stroke:'#fff','stroke-width':2}); s.append(sv('title',{},k+': '+v)); svg.append(s); a0=a1 });
+  svg.append(sv('text',{x:100,y:100,'text-anchor':'middle','font-size':30,'font-weight':700,fill:'#1b2533'},tot),sv('text',{x:100,y:120,'text-anchor':'middle','font-size':11,fill:'#6b7686'},'órdenes'));
+  const lg=el('div'); lg.style.cssText='margin-top:10px;font-size:12.5px';
+  entries.forEach(([k,v],i)=>{ const r=el('div'); r.style.cssText='display:flex;justify-content:space-between;padding:3px 0'; const n=el('span'); const d=el('span'); d.style.cssText='display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px;background:'+PAL[i%PAL.length]; n.append(d,k); r.append(n,el('span',null,v+' · '+Math.round(100*v/tot)+' %')); lg.append(r) });
+  b.append(svg,lg); return c }
+function barChart(title,byT){
+  const [c,b]=chartCard(title); const rows=Object.entries(byT).sort((a,b)=>(b[1].a+b[1].r+b[1].x)-(a[1].a+a[1].r+a[1].x));
+  if(!rows.length){ b.append(el('div','empty','Sin datos en el periodo.')); return c }
+  const max=Math.max(...rows.map(([,g])=>g.a+g.r+g.x)); b.append(legend([['Activas','#e0a100'],['Resueltas','#16a36a'],['Canceladas','#d33']]));
+  rows.forEach(([k,g])=>{ const r=el('div'); r.style.cssText='display:grid;grid-template-columns:170px 1fr 170px;gap:10px;align-items:center;padding:5px 0;font-size:13px';
+    const bar=el('div'); bar.style.cssText='display:flex;height:16px;border-radius:4px;overflow:hidden;background:#f0f3f7';
+    [['a','#e0a100'],['r','#16a36a'],['x','#d33']].forEach(([s,col])=>{ if(g[s]){ const p=el('div'); p.style.cssText=`width:${100*g[s]/max}%;background:${col}`; p.title=g[s]; bar.append(p) } });
+    r.append(el('span',null,k),bar,el('span',null,g.r+' resueltas · '+g.a+' activas · '+g.x+' canc. · '+(g.m?dur(g.m):'0 h'))); b.append(r) });
+  return c }
+
 /* ---------- secciones (solo datos reales del servidor; nada inventado) ---------- */
 const real=()=>O.filter(o=>!o.test);
 const daysAgo=s=>s?(Date.now()-new Date(s))/864e5:Infinity;
@@ -159,7 +202,7 @@ const badge=(txt,cls)=>el('span','b '+cls,txt);
 const statusBadge=o=>{ const s=STATUS[o.st]||[o.st,'s-active']; return badge(s[0],s[1]) };
 const src=t=>el('div','src',t);
 const eur=v=>Number(v).toLocaleString('es-ES',{minimumFractionDigits:2,maximumFractionDigits:2})+' €';
-const RANGE='Datos de las órdenes cargadas (últimos 45 días), sin órdenes de prueba.';
+const RANGE='Todas las órdenes reales del servidor, sin órdenes de prueba.';
 
 const SECS={
  hoy:['Hoy por zona',()=>{ const today=todayStr();
@@ -211,16 +254,43 @@ const SECS={
      card('Tickets por revisar',['Orden','Técnico','Proveedor','Fecha ticket','Total','Motivo'],rc.map(r=>['AMJ-'+r.reference,r.technician||'—',r.vendor_name||'—',r.receipt_date?fmtD(r.receipt_date):'—',r.total!=null?Number(r.total).toFixed(2)+' €':'—',(r.issues||[]).join(', ')||'—']),'No hay tickets pendientes de revisar.'),
      card('Órdenes con materiales pendientes de AMJ',['Orden','Técnico','Terminada','Motivo'],od.map(x=>['AMJ-'+x.reference,x.technician||'—',fmtD(x.finished_at),({NO_RECEIPT:'Sin ticket',NO_QUOTE:'Sin presupuesto de materiales',EXCEEDS_QUOTE:'Ticket supera lo presupuestado',RECEIPTS_PENDING:'Ticket por revisar'})[(x.materials_state||{}).reason]||(x.materials_state||{}).reason||'—']),'No hay órdenes pendientes.'),
      card('Histórico de tickets (60 días)',['Orden','Técnico','Proveedor','Fecha ticket','Total ticket','Aceptado','Estado'],(RH||[]).map(r=>['AMJ-'+r.reference,r.technician||'—',r.vendor_name||'—',r.receipt_date?fmtD(r.receipt_date):'—',r.total!=null?eur(r.total):'—',r.accepted_total!=null?eur(r.accepted_total):'—',badge(({approved:'Aprobado',validated:'Validado',rejected:'Rechazado',withdrawn:'Retirado',pending_review:'Por revisar'})[r.status]||r.status,r.status==='approved'||r.status==='validated'?'ok':(r.status==='pending_review'?'s-pending':'no'))]),RH?'No hay tickets en los últimos 60 días.':'Cargando…')] }],
- kpi:['KPI',()=>{ const R=real().filter(o=>daysAgo(o.ca)<=kpiDays), done=R.filter(o=>o.st==='completed'), canc=R.filter(o=>o.st==='cancelled');
-   const mins=done.filter(o=>o.min!==null).map(o=>o.min), avg=mins.length?Math.round(mins.reduce((a,b)=>a+b,0)/mins.length):null;
-   const waits=done.filter(o=>o.sa).map(o=>(new Date(o.sa)-new Date(o.ca))/36e5).sort((a,b)=>a-b), med=waits.length?waits[Math.floor(waits.length/2)]:null;
-   const seg=el('div','seg'); [[7,'7 días'],[30,'30 días'],[45,'45 días']].forEach(([d,l])=>{ const b=el('button',kpiDays===d?'on':'',l); b.onclick=()=>{kpiDays=d;renderSec()}; seg.append(b) });
-   const group=(key,label)=>{ const g={}; R.filter(o=>o.st!=='cancelled').forEach(o=>{ const k=key(o)||'—'; g[k]=g[k]||{n:0,d:0,m:0}; g[k].n++; if(o.st==='completed'){g[k].d++; g[k].m+=o.min||0} });
-     const max=Math.max(1,...Object.values(g).map(x=>x.n));
-     return card(label,[(s=>s[0].toUpperCase()+s.slice(1))(label.replace('Por ','')),'Órdenes','','Terminadas','Horas'],Object.entries(g).sort((a,b)=>b[1].n-a[1].n).map(([k,x])=>{ const b=el('div','bar'); b.style.width=Math.round(100*x.n/max)+'%'; return [k==='HELP'?'HELPHOUSING':k,x.n,b,x.d,dur(x.m||null)] })) };
-   return [seg,kpis([[R.length,'órdenes creadas'],[done.length,'terminadas'],[canc.length,'canceladas'],[done.length+canc.length?Math.round(100*done.length/(done.length+canc.length))+' %':'—','terminadas sobre cerradas'],[dur(avg),'tiempo medio de trabajo'],[med===null?'—':(med<24?med.toFixed(1)+' h':(med/24).toFixed(1)+' días'),'mediana: de creada a empezada']]),
-     src('Órdenes creadas en los últimos '+kpiDays+' días, sin pruebas. Tiempo de trabajo = cronómetro de la app.'),
-     group(o=>o.cl,'Por cliente'),group(o=>o.tc||'Sin asignar','Por técnico'),group(o=>o.sv,'Por servicio')] }],
+ kpi:['KPI',()=>{
+   /* Todo en una sola página: sin pestañas ni clics para ver información relacionada. */
+   const now=Date.now(), DAY=864e5;
+   const inPer=s=>{ if(!s) return false; const t=new Date(s).getTime(); if(kpiDays==='custom'){ const a=kpiFrom?new Date(kpiFrom).getTime():-Infinity, b=kpiTo?new Date(kpiTo).getTime()+DAY:Infinity; return t>=a&&t<b } return kpiDays==='all'||now-t<=kpiDays*DAY };
+   const R=real(), P_=R.filter(o=>inPer(o.ca)), done=P_.filter(o=>o.st==='completed'), canc=P_.filter(o=>o.st==='cancelled');
+   const hrs=(a,b)=>(new Date(b)-new Date(a))/36e5, avg=a=>a.length?a.reduce((x,y)=>x+y,0)/a.length:null;
+   const fmtH=h=>h===null?'—':(h<24?h.toFixed(1)+' h':(h/24).toFixed(1)+' d');
+   const tAt=avg(done.filter(o=>o.sa).map(o=>hrs(o.ca,o.sa))), tRes=avg(done.filter(o=>o.fa).map(o=>hrs(o.ca,o.fa)));
+   const RVp=(RV||[]).filter(r=>inPer(r.created_at)), stars=avg(RVp.map(r=>Number(r.stars)));
+   const open=R.filter(o=>!['completed','cancelled'].includes(o.st));
+   const openDays=open.reduce((a,o)=>a+(now-new Date(o.ca))/DAY,0);
+   const offHours=P_.filter(o=>{ const d=new Date(o.ca), h=Number(d.toLocaleString('en-GB',{timeZone:TZ,hour:'2-digit',hour12:false})), wd=d.toLocaleDateString('en-GB',{timeZone:TZ,weekday:'short'}); return h<8||h>=20||wd==='Sat'||wd==='Sun' });
+   const sec=(t)=>{ const h=el('div',null,t); h.style.cssText='font-weight:700;font-size:13px;margin:14px 0 8px;color:var(--navy)'; return h };
+   // selector de periodo
+   const seg=el('div','seg'); [['all','Todo'],[30,'Últimos 30 días'],[90,'Últimos 90 días'],['custom','Personalizado']].forEach(([d,l])=>{ const b=el('button',kpiDays===d?'on':'',l); b.onclick=()=>{kpiDays=d;renderSec()}; seg.append(b) });
+   if(kpiDays==='custom'){ ['kpiFrom','kpiTo'].forEach((k,i)=>{ const inp=el('input'); inp.type='date'; inp.value=(i?kpiTo:kpiFrom)||''; inp.style.cssText='border:1px solid var(--line);border-radius:9px;padding:6px 8px;font:inherit'; inp.onchange=()=>{ if(i) kpiTo=inp.value; else kpiFrom=inp.value; renderSec() }; seg.append(inp) }) }
+   const out=[seg,
+     sec('En el periodo'),kpis([[P_.length,'órdenes en el periodo'],[done.length+(P_.length?' ('+Math.round(100*done.length/P_.length)+' %)':''),'resueltas'],[canc.length,'canceladas'],[fmtH(tAt),'t. medio hasta empezar'],[fmtH(tRes),'t. medio hasta terminar'],[stars===null?'—':stars.toFixed(1)+' ★ ('+RVp.length+')','valoración media']]),
+     sec('Ahora mismo'),kpis([[open.length,'activas'],[open.filter(o=>grp(o)==='new').length,'sin técnico'],[open.filter(o=>grp(o)==='pend').length,'esperando al técnico'],[open.filter(o=>['on_way','in_progress'].includes(o.st)).length,'en camino o trabajando'],[open.filter(o=>o.tags.some(t=>t[0]!=='test')).length,'activas con aviso'],[openDays.toFixed(1)+' d','total días sin resolver'],[open.length?(openDays/open.length).toFixed(1)+' d':'—','media días por orden abierta']]),
+     sec('Seguimiento'),kpis([[offHours.length,'creadas fuera de horario (antes de 8, después de 20 o fin de semana)'],[P_.filter(o=>has(o,'piso')).length,'varias órdenes en un piso el mismo día'],[P_.filter(o=>has(o,'long')).length,'más de 2 h de trabajo'],[P_.filter(o=>has(o,'dup')).length,'duplicadas canceladas'],[done.reduce((a,o)=>a+(o.min||0),0)?dur(done.reduce((a,o)=>a+(o.min||0),0)):'—','horas de trabajo (cronómetro)']])];
+   // flujo temporal
+   const days={}; const add=(s,k)=>{ if(!s) return; const d=dayOf(s); if(!inPer(s)) return; (days[d]=days[d]||{c:0,a:0,r:0,x:0})[k]++ };
+   R.forEach(o=>{ add(o.ca,'c'); add(o.sa,'a'); if(o.st==='completed') add(o.fa,'r'); if(o.st==='cancelled') add(o.ca,'x') });
+   out.push(lineChart('Flujo temporal de órdenes',days,[['c','Creadas','#13385f'],['a','Atendidas (empezadas)','#1b8fd9'],['r','Resueltas','#16a36a'],['x','Canceladas (día de creación)','#d33']]));
+   // donuts
+   const cnt=(list,key)=>{ const m={}; list.forEach(o=>{ const k=key(o)||'—'; m[k]=(m[k]||0)+1 }); return Object.entries(m).sort((a,b)=>b[1]-a[1]) };
+   const cap=s=>s?s.charAt(0).toUpperCase()+s.slice(1).toLowerCase():s;
+   const grid=el('div'); grid.style.cssText='display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:14px;margin-top:14px';
+   grid.append(donut('Por estado (activas ahora)',cnt(open,o=>(STATUS[o.st]||[o.st])[0])),donut('Por cliente',cnt(P_,o=>clName(o.cl))),donut('Por ciudad',cnt(P_,o=>cap(o.loc))),donut('Por servicio',cnt(P_,o=>o.sv)));
+   out.push(grid);
+   // carga por técnico
+   const byT={}; P_.forEach(o=>{ const k=o.tc||'Sin asignar'; const g=byT[k]=byT[k]||{a:0,r:0,x:0,m:0}; if(o.st==='completed'){g.r++; g.m+=o.min||0} else if(o.st==='cancelled') g.x++; else g.a++ });
+   out.push(barChart('Carga por técnico (órdenes del periodo)',byT));
+   // valoraciones
+   out.push(card('Valoraciones del periodo',['Orden','Cliente','Técnico','Valoración','Fecha','Comentario'],RVp.map(r=>['AMJ-'+r.reference,r.customer||'—',r.technician||'—','★'.repeat(Number(r.stars))+'☆'.repeat(5-Number(r.stars)),fmtD(r.created_at),r.comment||'—']),RV?'No hay valoraciones en el periodo.':'Cargando…'));
+   out.push(src('Datos reales del servidor, sin órdenes de prueba. «Hasta empezar» = de creada a iniciada; «hasta terminar» = de creada a finalizada. Severidad, prioridad, subcategoría, reabiertas y pool no existen en AMJ y no se muestran.'));
+   return out }],
  alertas:['Alertas',()=>{ const A=real().filter(o=>o.st!=='cancelled'&&o.tags.some(t=>t[0]!=='test'));
    const by={}; A.forEach(o=>o.tags.filter(t=>t[0]!=='test').forEach(t=>{ const k=t[0]; (by[k]=by[k]||[]).push([o,t[1]]) }));
    const names={wait:'Sin técnico o rechazadas',long:'Horas largas',piso:'Varias órdenes en un piso el mismo día',dup:'Duplicadas'};
