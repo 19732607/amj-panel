@@ -6,7 +6,7 @@
 const SB='https://biwjrbcfupmbpoxnrolt.supabase.co', KEY='sb_publishable_ywkQpKdfMksufdqWkv-fyA_OtcxTXEm';
 const TZ='Europe/Madrid', POLL=15000, PAGE=100, MAXPAGES=5, STORE='amj.panel.session';
 const $=id=>document.getElementById(id);
-let session=null, T=null, M=null, sec='ordenes', kpiDays=30, O=[], prevRev={}, view='all', lastOk=0, timer=null, loading=false;
+let session=null, T=null, M=null, P=null, RH=null, payT='', sec='ordenes', kpiDays=30, O=[], prevRev={}, view='all', lastOk=0, timer=null, loading=false;
 
 /* ---------- sesión ---------- */
 function storage(){ try{ return localStorage.getItem(STORE)?localStorage:sessionStorage }catch(e){ return null } }
@@ -79,6 +79,8 @@ async function load(){
     prevRev={}; fresh.forEach(o=>prevRev[o.id]=o.rev); O=fresh; computeTags();
     try{ T=await rpc('amj_admin_technicians',{}) }catch(e){ if(e.message==='ACCESS_DENIED') throw e }
     try{ M=await rpc('amj_admin_materials_pending',{}) }catch(e){ if(e.message==='ACCESS_DENIED') throw e }
+    if(sec==='pagos'||P===null){ try{ P=await rpc('amj_admin_payouts',{}) }catch(e){ if(e.message==='ACCESS_DENIED') throw e } }
+    if(sec==='materiales'||RH===null){ try{ RH=await rpc('amj_admin_receipts_history',{p_days:60}) }catch(e){ if(e.message==='ACCESS_DENIED') throw e } }
     lastOk=Date.now(); $('err').hidden=true; render(changed); fillFilters(); renderSec();
   }catch(e){
     if(e.message==='ACCESS_DENIED'){ showErr('Esta cuenta no es de administración. Entra con la cuenta de administrador de AMJ.'); logout(); }
@@ -155,6 +157,7 @@ function card(title,head,rows,emptyTxt){ const c=el('div','card'); c.append(el('
 const badge=(txt,cls)=>el('span','b '+cls,txt);
 const statusBadge=o=>{ const s=STATUS[o.st]||[o.st,'s-active']; return badge(s[0],s[1]) };
 const src=t=>el('div','src',t);
+const eur=v=>Number(v).toLocaleString('es-ES',{minimumFractionDigits:2,maximumFractionDigits:2})+' €';
 const RANGE='Datos de las órdenes cargadas (últimos 45 días), sin órdenes de prueba.';
 
 const SECS={
@@ -182,13 +185,31 @@ const SECS={
        return {n:L.length,cells:[k,L.length,L.filter(o=>o.st==='completed').length,L.filter(o=>o.st!=='completed').length,dur(L.reduce((a,o)=>a+(o.min||0),0)||null),fmtD(last)]} }).sort((a,b)=>b.n-a.n);
      out.push(card(clName(c)+' · '+Object.keys(byP).length+' inmuebles',['Piso / dirección','Órdenes','Terminadas','Abiertas','Horas','Última'],rows)) });
    return out }],
- pagos:['Pagos a técnicos',()=>[ (()=>{ const n=el('div','banner'); n.textContent='Esta sección necesita dos datos que el panel todavía no puede leer: (1) las horas a pagar de cada orden con los ajustes de AMJ y la tarifa de cada técnico, que están en el servidor pero sin lectura para el panel, y (2) qué está ya pagado, que está en Airtable (Liquidaciones de técnicos). Para mostrarlo con datos reales hace falta una consulta de solo lectura nueva en el servidor, y eso necesita tu permiso. Hasta entonces no se muestra ninguna cifra, para no enseñarte importes inventados.'; return n })() ]],
+ pagos:['Pagos a técnicos',()=>{
+   if(!P) return [el('div','empty','Cargando pagos…')];
+   const rows=P.filter(x=>!/prueba|NO ASIGNAR/i.test(x.technician||'')).map(x=>{ const lt=x.labor_total==null?null:Number(x.labor_total), mt=x.materials_total==null?null:Number(x.materials_total);
+     const lp=Number(x.labor_paid||0), mp=Number(x.materials_paid||0);
+     return {...x, lt, mt, lp, mp, gen:(lt||0)+(mt||0), paid:lp+mp, pend:Math.max((lt||0)-lp,0)+Math.max((mt||0)-mp,0)} });
+   const byT={}; rows.forEach(r=>{ const k=r.technician||'(sin técnico)'; const g=byT[k]=byT[k]||{n:0,gen:0,paid:0,pend:0,mpend:0,last:null}; g.n++; g.gen+=r.gen; g.paid+=r.paid; g.pend+=r.pend; if(r.mt===null&&r.materials_needs_amj) g.mpend++; if(r.last_paid_at&&(!g.last||r.last_paid_at>g.last)) g.last=r.last_paid_at });
+   const tot=rows.reduce((a,r)=>({gen:a.gen+r.gen,paid:a.paid+r.paid,pend:a.pend+r.pend}),{gen:0,paid:0,pend:0});
+   const sel=el('select'); sel.style.cssText='border:1px solid var(--line);border-radius:9px;padding:8px 10px;font:inherit;margin-bottom:12px';
+   sel.add(new Option('Todos los técnicos','')); Object.keys(byT).sort().forEach(k=>sel.add(new Option(k,k))); sel.value=payT; sel.onchange=()=>{payT=sel.value;renderSec()};
+   const detail=rows.filter(r=>!payT||r.technician===payT);
+   return [kpis([[eur(tot.gen),'generado (IVA incluido)'],[eur(tot.paid),'pagado'],[eur(tot.pend),'pendiente de pagar'],[rows.filter(r=>r.pend>0.004).length,'órdenes con importe pendiente']]),
+     src('Órdenes terminadas (sin pruebas). Mano de obra = horas de la orden, ya con los ajustes de AMJ, por la tarifa del técnico con IVA. Materiales = importe aceptado + 21 %. Pagado = pagos registrados en el servidor (coinciden con las órdenes marcadas como PAGADO en Airtable).'),
+     card('Por técnico',['Técnico','Órdenes','Generado','Pagado','Pendiente','Materiales por revisar','Último pago'],
+       Object.entries(byT).sort((a,b)=>b[1].pend-a[1].pend).map(([k,g])=>({cells:[k,g.n,eur(g.gen),eur(g.paid),eur(g.pend),g.mpend||'—',g.last?fmtD(g.last):'—'],onclick:()=>{payT=k;renderSec()}}))),
+     sel,
+     card('Detalle por orden'+(payT?' · '+payT:''),['Fecha','Orden','Técnico','Horas','Mano de obra','Materiales','Total','Pagado','Estado'],
+       detail.map(r=>[fmtD(r.finished_at),'AMJ-'+r.reference+(r.adjusted?' · horas ajustadas':'')+(r.invoiced?' · facturada':''),r.technician||'—',r.billable_minutes!=null?dur(r.billable_minutes):'—',r.lt===null?'Sin tarifa':eur(r.lt),
+         r.mt===null?(r.materials_needs_amj?'Por revisar':'—'):eur(r.mt),eur(r.gen),eur(r.paid),
+         (r.gen<=0.004?badge('Sin importe','no'):badge(r.pend<=0.004?'Pagado':(r.paid>0?'Pago parcial':'Pendiente'),r.pend<=0.004?'ok':'s-pending'))]),'No hay órdenes.')] }],
  materiales:['Materiales y tickets',()=>{ const rc=(M&&M.receipts)||[], od=(M&&M.orders)||[];
    return [kpis([[rc.length,'tickets por revisar'],[od.length,'órdenes con materiales pendientes de AMJ']]),
      src('Datos en vivo del servidor: tickets que la IA no pudo validar y órdenes terminadas cuyos materiales esperan decisión de AMJ. La revisión se hace en la app.'),
      card('Tickets por revisar',['Orden','Técnico','Proveedor','Fecha ticket','Total','Motivo'],rc.map(r=>['AMJ-'+r.reference,r.technician||'—',r.vendor_name||'—',r.receipt_date?fmtD(r.receipt_date):'—',r.total!=null?Number(r.total).toFixed(2)+' €':'—',(r.issues||[]).join(', ')||'—']),'No hay tickets pendientes de revisar.'),
      card('Órdenes con materiales pendientes de AMJ',['Orden','Técnico','Terminada','Motivo'],od.map(x=>['AMJ-'+x.reference,x.technician||'—',fmtD(x.finished_at),({NO_RECEIPT:'Sin ticket',NO_QUOTE:'Sin presupuesto de materiales',EXCEEDS_QUOTE:'Ticket supera lo presupuestado',RECEIPTS_PENDING:'Ticket por revisar'})[(x.materials_state||{}).reason]||(x.materials_state||{}).reason||'—']),'No hay órdenes pendientes.'),
-     src('El histórico de tickets aprobados y rechazados no está disponible para el panel (necesita una consulta de solo lectura nueva en el servidor).')] }],
+     card('Histórico de tickets (60 días)',['Orden','Técnico','Proveedor','Fecha ticket','Total ticket','Aceptado','Estado'],(RH||[]).map(r=>['AMJ-'+r.reference,r.technician||'—',r.vendor_name||'—',r.receipt_date?fmtD(r.receipt_date):'—',r.total!=null?eur(r.total):'—',r.accepted_total!=null?eur(r.accepted_total):'—',badge(({approved:'Aprobado',validated:'Validado',rejected:'Rechazado',withdrawn:'Retirado',pending_review:'Por revisar'})[r.status]||r.status,r.status==='approved'||r.status==='validated'?'ok':(r.status==='pending_review'?'s-pending':'no'))]),RH?'No hay tickets en los últimos 60 días.':'Cargando…')] }],
  kpi:['KPI',()=>{ const R=real().filter(o=>daysAgo(o.ca)<=kpiDays), done=R.filter(o=>o.st==='completed'), canc=R.filter(o=>o.st==='cancelled');
    const mins=done.filter(o=>o.min!==null).map(o=>o.min), avg=mins.length?Math.round(mins.reduce((a,b)=>a+b,0)/mins.length):null;
    const waits=done.filter(o=>o.sa).map(o=>(new Date(o.sa)-new Date(o.ca))/36e5).sort((a,b)=>a-b), med=waits.length?waits[Math.floor(waits.length/2)]:null;
@@ -224,7 +245,7 @@ $('lf').addEventListener('submit',async e=>{ e.preventDefault(); $('lerr').textC
   catch(err){ $('lerr').textContent=err.status===400?'Correo o contraseña incorrectos.':'No se pudo conectar. Inténtalo de nuevo.' }
   finally{ $('lb').disabled=false } });
 $('logout').onclick=logout; $('logout2').onclick=logout;
-document.querySelectorAll('.nav[data-sec]').forEach(n=>n.onclick=()=>{ sec=n.dataset.sec; document.querySelectorAll('.nav[data-sec]').forEach(x=>x.classList.toggle('on',x===n)); renderSec() }); $('sh').onclick=closeDr;
+document.querySelectorAll('.nav[data-sec]').forEach(n=>n.onclick=()=>{ sec=n.dataset.sec; if(sec==='pagos'||sec==='materiales') load(); document.querySelectorAll('.nav[data-sec]').forEach(x=>x.classList.toggle('on',x===n)); renderSec() }); $('sh').onclick=closeDr;
 document.addEventListener('keydown',e=>{ if(e.key==='Escape') closeDr() });
 document.addEventListener('visibilitychange',()=>{ if(!document.hidden&&session) load() });
 ['q','fc','ft','fs','fd','fp'].forEach(id=>$(id).addEventListener('input',()=>render()));
