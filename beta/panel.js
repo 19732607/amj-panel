@@ -6,7 +6,7 @@
 const SB='https://biwjrbcfupmbpoxnrolt.supabase.co', KEY='sb_publishable_ywkQpKdfMksufdqWkv-fyA_OtcxTXEm';
 const TZ='Europe/Madrid', POLL=15000, PAGE=100, MAXPAGES=5, STORE='amj.panel.session';
 const $=id=>document.getElementById(id);
-let session=null, T=null, M=null, P=null, RH=null, payT='', sec='ordenes', kpiDays=30, O=[], prevRev={}, view='all', lastOk=0, timer=null, loading=false;
+let session=null, TEST=new Set(), T=null, M=null, P=null, RH=null, payT='', sec='ordenes', kpiDays=30, O=[], prevRev={}, view='all', lastOk=0, timer=null, loading=false;
 
 /* ---------- sesión ---------- */
 function storage(){ try{ return localStorage.getItem(STORE)?localStorage:sessionStorage }catch(e){ return null } }
@@ -46,7 +46,7 @@ function normalize(rows){
     const pre=piso.split('-')[0].toUpperCase(); const cl=pre==='ENSO'||pre==='HELP'?pre:(r.customer_name||'Otro');
     const appt=r.confirmed_time||r.proposed_time||(r.preferred_date&&r.preferred_time?r.preferred_date+'T'+r.preferred_time+':00':null);
     const min=r.started_at&&r.finished_at?Math.round((new Date(r.finished_at)-new Date(r.started_at))/60000):null;
-    const test=/PRUEBA|NO EJECUTAR|prueba autom/i.test(ds)||/^calle de prueba/i.test(r.address||'');
+    const test=TEST.has(r.id)||/PRUEBA|NO EJECUTAR|prueba autom/i.test(ds)||/^calle de prueba/i.test(r.address||'')||/prueba|NO ASIGNAR/i.test(r.technician_name||'');
     return {id:r.id,ref:r.reference,rev:r.revision,st:r.status,sv:r.service||'',piso,work,ad:r.address||'',loc:r.locality||'',ct:r.confirmed_time,appt,
       ca:r.created_at,sa:r.started_at,fa:r.finished_at,tc:r.technician_name||'',tid:r.technician_id||'',cust:r.customer_name||'',cl,min,test,report:r.report||'',
       day:dayOf(r.confirmed_time||r.created_at)};
@@ -70,6 +70,7 @@ function ago(s){ const m=Math.round((Date.now()-new Date(s))/60000); return m<60
 async function load(){
   if(loading||document.hidden) return; loading=true;
   try{
+    try{ TEST=new Set(await rpc('amj_admin_test_orders',{})) }catch(e){ if(e.message==='ACCESS_DENIED') throw e }
     let all=[], before=null;
     for(let p=0;p<MAXPAGES;p++){ const rows=await rpc('amj_admin_orders',{p_filter:'todas',p_before:before,p_limit:PAGE}); all=all.concat(rows);
       if(rows.length<PAGE) break; before=rows[rows.length-1].reference;
@@ -162,7 +163,7 @@ const RANGE='Datos de las órdenes cargadas (últimos 45 días), sin órdenes de
 
 const SECS={
  hoy:['Hoy por zona',()=>{ const today=todayStr();
-   const L=real().filter(o=>o.st!=='cancelled'&&(o.day===today||dayOf(o.appt)===today||dayOf(o.sa)===today||dayOf(o.fa)===today||['on_way','in_progress'].includes(o.st)));
+   const L=real().filter(o=>o.st!=='cancelled'&&(o.day===today||dayOf(o.ca)===today||dayOf(o.appt)===today||dayOf(o.sa)===today||dayOf(o.fa)===today||['on_way','in_progress'].includes(o.st)));
    const out=[kpis([[L.length,'órdenes de hoy'],[L.filter(o=>['on_way','in_progress'].includes(o.st)).length,'en camino o trabajando'],[L.filter(o=>o.st==='completed').length,'terminadas hoy'],[L.filter(o=>grp(o)==='new').length,'sin técnico']]),
      src('El mapa necesita las coordenadas de cada orden, que hoy el servidor no da al panel. Mientras tanto, las órdenes de hoy agrupadas por localidad.')];
    const byLoc={}; L.forEach(o=>{ const k=o.loc||'(sin localidad)'; (byLoc[k]=byLoc[k]||[]).push(o) });
