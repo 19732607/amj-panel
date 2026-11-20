@@ -4,9 +4,9 @@
 (function(){
 'use strict';
 const SB='https://biwjrbcfupmbpoxnrolt.supabase.co', KEY='sb_publishable_ywkQpKdfMksufdqWkv-fyA_OtcxTXEm';
-const TZ='Europe/Madrid', POLL=15000, PAGE=100, MAXPAGES=5, STORE='amj.panel.session';
+const TZ='Europe/Madrid', POLL=15000, PAGE=100, MAXPAGES=200, STORE='amj.panel.session';
 const $=id=>document.getElementById(id);
-let session=null, TEST=new Set(), T=null, M=null, P=null, RH=null, payT='', sec='ordenes', kpiDays='all', kpiFrom='', kpiTo='', RV=null, O=[], prevRev={}, view='all', lastOk=0, timer=null, loading=false;
+let session=null, WARN='', TEST=new Set(), T=null, M=null, P=null, RH=null, payT='', sec='ordenes', kpiDays='all', kpiFrom='', kpiTo='', RV=null, O=[], prevRev={}, view='all', lastOk=0, timer=null, loading=false;
 
 /* ---------- sesión ---------- */
 function storage(){ try{ return localStorage.getItem(STORE)?localStorage:sessionStorage }catch(e){ return null } }
@@ -70,11 +70,13 @@ function ago(s){ const m=Math.round((Date.now()-new Date(s))/60000); return m<60
 async function load(){
   if(loading||document.hidden) return; loading=true;
   try{
-    try{ TEST=new Set(await rpc('amj_admin_test_orders',{})) }catch(e){ if(e.message==='ACCESS_DENIED') throw e }
+    TEST=new Set(await rpc('amj_admin_test_orders',{})); /* obligatoria: si falla, falla toda la carga y no se muestran cifras nuevas */
     let all=[], before=null;
+    let complete=false;
     for(let p=0;p<MAXPAGES;p++){ const rows=await rpc('amj_admin_orders',{p_filter:'todas',p_before:before,p_limit:PAGE}); all=all.concat(rows);
-      if(rows.length<PAGE) break; before=rows[rows.length-1].reference;
+      if(rows.length<PAGE){ complete=true; break } before=rows[rows.length-1].reference;
     }
+    WARN=complete?'':'ATENCIÓN: hay más de '+(MAXPAGES*PAGE)+' órdenes y el panel no las ha cargado todas. Las cifras están incompletas: avisa a soporte.';
     const fresh=normalize(all), changed=new Set();
     if(O.length) fresh.forEach(o=>{ if(prevRev[o.id]!==o.rev) changed.add(o.id) });
     prevRev={}; fresh.forEach(o=>prevRev[o.id]=o.rev); O=fresh; computeTags();
@@ -83,7 +85,7 @@ async function load(){
     try{ RV=await rpc('amj_admin_reviews',{}) }catch(e){ if(e.message==='ACCESS_DENIED') throw e }
     if(sec==='pagos'||P===null){ try{ P=await rpc('amj_admin_payouts',{}) }catch(e){ if(e.message==='ACCESS_DENIED') throw e } }
     if(sec==='materiales'||RH===null){ try{ RH=await rpc('amj_admin_receipts_history',{p_days:60}) }catch(e){ if(e.message==='ACCESS_DENIED') throw e } }
-    lastOk=Date.now(); $('err').hidden=true; render(changed); fillFilters(); renderSec();
+    lastOk=Date.now(); if(WARN) showErr(WARN); else $('err').hidden=true; render(changed); fillFilters(); renderSec();
   }catch(e){
     if(e.message==='ACCESS_DENIED'){ showErr('Esta cuenta no es de administración. Entra con la cuenta de administrador de AMJ.'); logout(); }
     else if(e.status===400||e.message==='NO_SESSION'){ logout(); }
@@ -248,7 +250,7 @@ const SECS={
        detail.map(r=>[fmtD(r.finished_at),'AMJ-'+r.reference+(r.adjusted?' · horas ajustadas':'')+(r.invoiced?' · facturada':''),r.technician||'—',r.billable_minutes!=null?dur(r.billable_minutes):'—',r.lt===null?'Sin tarifa':eur(r.lt),
          r.mt===null?(r.materials_needs_amj?'Por revisar':'—'):eur(r.mt),eur(r.gen),eur(r.paid),
          (r.gen<=0.004?badge('Sin importe','no'):badge(r.pend<=0.004?'Pagado':(r.paid>0?'Pago parcial':'Pendiente'),r.pend<=0.004?'ok':'s-pending'))]),'No hay órdenes.')] }],
- materiales:['Materiales y tickets',()=>{ const rc=(M&&M.receipts)||[], od=(M&&M.orders)||[];
+ materiales:['Materiales y tickets',()=>{ const rc=((M&&M.receipts)||[]).filter(r=>!TEST.has(r.order_id)), od=((M&&M.orders)||[]).filter(x=>!TEST.has(x.id));
    return [kpis([[rc.length,'tickets por revisar'],[od.length,'órdenes con materiales pendientes de AMJ']]),
      src('Datos en vivo del servidor: tickets que la IA no pudo validar y órdenes terminadas cuyos materiales esperan decisión de AMJ. La revisión se hace en la app.'),
      card('Tickets por revisar',['Orden','Técnico','Proveedor','Fecha ticket','Total','Motivo'],rc.map(r=>['AMJ-'+r.reference,r.technician||'—',r.vendor_name||'—',r.receipt_date?fmtD(r.receipt_date):'—',r.total!=null?Number(r.total).toFixed(2)+' €':'—',(r.issues||[]).join(', ')||'—']),'No hay tickets pendientes de revisar.'),
@@ -304,6 +306,7 @@ function renderSec(){
   const isO=sec==='ordenes'; $('sec-ordenes').hidden=!isO; $('sec-other').hidden=isO; if(isO) return;
   const [title,fn]=SECS[sec]; $('otitle').textContent=title; const b=$('obody'); b.innerHTML='';
   if(!lastOk){ b.append(el('div','empty','Cargando datos del servidor…')); return }
+  if(WARN) b.append(el('div','banner',WARN));
   fn().forEach(x=>b.append(x));
 }
 
