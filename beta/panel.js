@@ -87,18 +87,18 @@ function repFmt(L,d0,d1,WK,QN,MS,CL){ const addD0=(d,n)=>{ const x=new Date(d+'T
   const tr=el('div','rf-tr'); tr.append(el('b',null,(cname+(city?' · '+city:'')).toUpperCase()),el('span',null,MS?'Informe mensual · '+per:WK?'Servicio '+dm(d0)+' – '+dm(d1)+' · '+d1.slice(0,4):'Informe diario · '+fd(d1,{day:'numeric',month:'short',year:'numeric'}))); top.append(tr); doc.append(top);
   doc.append(el('h1','rf-h1',MS?'Informe mensual de servicio':WK?'Informe de servicio':'Informe diario de servicio'),el('div','rf-sub',[cname,city,per].filter(Boolean).join(' · ')));
   const pisos=new Set(L.map(o=>o.piso||o.ad)).size, loaded=L.every(o=>o.id in MED), mload=L.every(o=>o.id in MAT), nf=L.reduce((a,o)=>a+(MED[o.id]||[]).length,0);
-  const sumM=(arr,f)=>arr.reduce((a,m)=>a+Number(m[f]||0),0), allM=L.flatMap(o=>MAT[o.id]||[]);
+  const sumM=(arr,f)=>arr.reduce((a,m)=>a+Number(m[f]||0),0), allM=L.flatMap(o=>repMat(o)||[]);
   const help=one&&cls[0]==='HELP', vkey=o=>(o.piso||o.ad)+'|'+dayOf(o.sa);
   const hAll=help?real().filter(o=>o.cl==='HELP'&&o.st!=='cancelled'&&o.sa):[];
   /* periodos contractuales que toca el informe (hasta la fecha de corte); cada uno con sus visitas y su saldo */
   const pers=(help?HELP_PERIODOS:[]).filter(p=>p[0]<=dc&&p[1]>=d0).map(([a,b,tot])=>{ const upto=dc<b?dc:b, from=d0>a?d0:a, V=hAll.filter(o=>dayOf(o.sa)>=a&&dayOf(o.sa)<=upto); return {a,b,tot,upto,from,V,n:new Set(V.map(vkey)).size,inR:V.filter(o=>dayOf(o.sa)>=from)} });
   const PM=pers.slice().reverse().find(p=>p.inR.length)||pers[pers.length-1]||null;
-  const intro=el('p','rf-intro'); intro.append(el('b',null,L.length+(L.length===1?' orden de trabajo finalizada ':' órdenes de trabajo finalizadas ')+(MS?'en '+per:WK?per.replace(/^.* · /,''):'el '+dlong)+'.'),document.createTextNode(' Se detallan las intervenciones por inmueble, el informe del técnico'+(WK?', las fotografías y los materiales declarados por los técnicos.':' y las fotografías de cada trabajo.'))); doc.append(intro);
+  const intro=el('p','rf-intro'); intro.append(el('b',null,L.length+(L.length===1?' orden de trabajo finalizada ':' órdenes de trabajo finalizadas ')+(MS?'en '+per:WK?per.replace(/^.* · /,''):'el '+dlong)+'.'),document.createTextNode(' Se detallan las intervenciones por inmueble, el informe del técnico'+(WK?', las fotografías y los materiales.':' y las fotografías de cada trabajo.'))); doc.append(intro);
   if(live) doc.append(el('p','rf-live','Periodo en curso: datos hasta el '+dm(dc)+'. El periodo termina el '+dm(d1)+'.'));
   const box=el('div','rf-kp'); const k=(v,t)=>{ const d=el('div'); d.append(el('b',null,v),el('span',null,t)); box.append(d) };
   k(String(L.length),L.length===1?'orden finalizada':'órdenes finalizadas');
   if(PM){ k(PM.n+' / '+PM.tot,'avisos consumidos'+(pers.length>1?' (periodo '+dm(PM.a)+' – '+dm(PM.b)+')':'')); k(String(Math.max(PM.tot-PM.n,0)),'avisos disponibles al '+dm(PM.upto)) } else k(String(pisos),pisos===1?'inmueble atendido':'inmuebles atendidos');
-  if(WK) k(mload?eur2(sumM(allM,'total')):'…','materiales declarados, IVA incluido'); else k(loaded?String(nf):'…','fotografías'); doc.append(box);
+  if(WK) k(mload?eur2(sumM(allM,'total')):'…','materiales, IVA incluido'); else k(loaded?String(nf):'…','fotografías'); doc.append(box);
   if(one){ doc.append(H('Cómo trabajamos cada aviso')); const st=el('div','rf-steps');
     ['Aviso de '+cname,'Orden en la app con el código del piso','Asignación de técnico y cita','Trabajo en el inmueble','Cierre con informe y fotos',help?'Aviso computado e informe al cliente':'Informe al cliente'].forEach((t,i)=>{ const d=el('div'); d.append(el('b',null,String(i+1)),el('span',null,t)); st.append(d) }); doc.append(st) }
   if(MS){ /* KPI del mes */
@@ -129,7 +129,7 @@ function repFmt(L,d0,d1,WK,QN,MS,CL){ const addD0=(d,n)=>{ const x=new Date(d+'T
     /* evolución por semana */
     doc.append(H('Evolución por semana')); const [tw,bw]=table(['Semana','Recibidas','Finalizadas','Inmuebles','Materiales']); const addD=(d,n)=>{ const x=new Date(d+'T12:00:00'); x.setDate(x.getDate()+n); return x.toLocaleDateString('sv-SE') };
     for(let a=d0;a<=dc;){ const wd=(new Date(a+'T12:00:00').getDay()+6)%7; let b=addD(a,6-wd); if(b>dc) b=dc; const F=L.filter(o=>dayOf(o.fa)>=a&&dayOf(o.fa)<=b);
-      row(bw,[dm(a)+' – '+dm(b),String(rec.filter(o=>dayOf(o.ca)>=a&&dayOf(o.ca)<=b).length),String(F.length),String(new Set(F.map(code)).size),mload?eur2(sumM(F.flatMap(o=>MAT[o.id]||[]),'total')):'…']); a=addD(b,1) }
+      row(bw,[dm(a)+' – '+dm(b),String(rec.filter(o=>dayOf(o.ca)>=a&&dayOf(o.ca)<=b).length),String(F.length),String(new Set(F.map(code)).size),mload?eur2(sumM(F.flatMap(o=>repMat(o)||[]),'total')):'…']); a=addD(b,1) }
     row(bw,['Total',String(rec.length),String(L.length),String(pisos),mload?eur2(sumM(allM,'total')):'…'],'tot'); doc.append(tw);
   }
   if(WK&&L.length){ /* órdenes por inmueble y tipo de trabajo */
@@ -159,8 +159,8 @@ function repFmt(L,d0,d1,WK,QN,MS,CL){ const addD0=(d,n)=>{ const x=new Date(d+'T
   if(L.length) doc.append(H('Fotos de las intervenciones'));
   L.forEach(o=>{ const g=el('div','rf-og'); g.append(el('div','rf-oh',(WK?dm(dayOf(o.fa))+' · ':'')+'AMJ-'+o.ref+' · '+(o.work||'').replace(/\.$/,'')+' · '+code(o))); const w=repPhotos(o); w.className='rf-ph'; g.append(w); g._m={id:o.id}; doc.append(g) });
   if(WK){ /* materiales */
-    if((QN||MS)&&mload){ const withM=L.filter(o=>(MAT[o.id]||[]).length), tot=sumM(allM,'total'), oT=o=>sumM(MAT[o.id],'total');
-      doc.append(H('Informe de materiales')); const p=el('p','rf-intro'); p.append(el('b',null,eur2(tot)+' en materiales en '+withM.length+' de las '+L.length+' órdenes finalizadas.'),document.createTextNode(' Importes declarados por los técnicos, con el IVA desglosado.')); doc.append(p);
+    if((QN||MS)&&mload){ const withM=L.filter(o=>repMat(o).length), tot=sumM(allM,'total'), oT=o=>sumM(repMat(o),'total');
+      doc.append(H('Informe de materiales')); const p=el('p','rf-intro'); p.append(el('b',null,eur2(tot)+' en materiales en '+withM.length+' de las '+L.length+' órdenes finalizadas.'),document.createTextNode(' Importes según el ticket de compra o la autorización de AMJ, con el IVA desglosado.')); doc.append(p);
       const bx=el('div','rf-kp'); const kk=(v,t)=>{ const d=el('div'); d.append(el('b',null,v),el('span',null,t)); bx.append(d) };
       kk(eur2(tot),'total materiales, IVA incluido (base '+eur2(sumM(allM,'subtotal'))+' · IVA '+eur2(sumM(allM,'iva'))+')'); kk(withM.length+' / '+L.length,'órdenes con materiales'+(L.length?' ('+Math.round(withM.length/L.length*100)+' %)':''));
       kk(withM.length?eur2(tot/withM.length):'—','gasto medio por orden con materiales'); kk(L.length?eur2(tot/L.length):'—','gasto medio por orden finalizada'); doc.append(bx);
@@ -169,10 +169,10 @@ function repFmt(L,d0,d1,WK,QN,MS,CL){ const addD0=(d,n)=>{ const x=new Date(d+'T
       spend('Gasto por tipo de trabajo',o=>o.sv||'Sin clasificar'); spend('Gasto por inmueble',code);
       if(withM.length){ doc.append(H('Por técnico')); const [t5,b5]=table(['Técnico','Órdenes con material','Total']); const g={}; withM.forEach(o=>{ const k=(o.tc||'—').trim().split(/\s+/)[0]; /* ante el cliente, solo el nombre de pila */ (g[k]=g[k]||{n:0,t:0}); g[k].n++; g[k].t+=oT(o) });
         Object.keys(g).sort((x,y)=>g[y].t-g[x].t).forEach(k=>row(b5,[k,String(g[k].n),eur2(g[k].t)])); row(b5,['Total',String(withM.length),eur2(tot)],'tot'); doc.append(t5) } }
-    doc.append(H('Relación detallada de materiales'),el('p','rf-intro','Cada línea corresponde a un material declarado por el técnico en la orden.'));
-    const [t3,b3]=table(['Fecha','Orden / inmueble','Trabajo y material','Base','IVA','Total'],'mat'); const withM=L.filter(o=>(MAT[o.id]||[]).length);
+    doc.append(H('Relación detallada de materiales'),el('p','rf-intro','Materiales de cada orden, por el importe del ticket de compra o el autorizado por AMJ.'));
+    const [t3,b3]=table(['Fecha','Orden / inmueble','Trabajo y material','Base','IVA','Total'],'mat'); const withM=L.filter(o=>repMat(o).length);
     if(!mload){ const e=td('Cargando materiales…'); e.colSpan=6; row(b3,[e]) } else if(!withM.length){ const e=td((MS?'Este mes':'Esta '+PW)+' no se han declarado materiales.'); e.colSpan=6; row(b3,[e]) }
-    withM.forEach(o=>{ const M=MAT[o.id]; M.forEach((m,i)=>{ const c=el('td'); if(!i) c.append(el('b',null,(o.work||'').replace(/\.$/,'')),el('br')); c.append(document.createTextNode((m.description||'—')+(Number(m.quantity||1)!==1?' × '+Number(m.quantity):'')));
+    withM.forEach(o=>{ const M=repMat(o); M.forEach((m,i)=>{ const c=el('td'); if(!i) c.append(el('b',null,(o.work||'').replace(/\.$/,'')),el('br')); c.append(document.createTextNode((m.description||'—')+(Number(m.quantity||1)!==1?' × '+Number(m.quantity):'')));
         row(b3,[td(i?'':dm(dayOf(o.fa)),'nwr'),td(i?'':'AMJ-'+o.ref+' · '+code(o),'nwr'),c,td(eur2(m.subtotal),'r'),td(eur2(m.iva),'r'),td(eur2(m.total),'r')]) });
       if(M.length>1) row(b3,['','','Subtotal AMJ-'+o.ref,td(eur2(sumM(M,'subtotal')),'r'),td(eur2(sumM(M,'iva')),'r'),td(eur2(sumM(M,'total')),'r')],'sub') });
     if(mload&&withM.length) row(b3,['','','Total '+DELA,td(eur2(sumM(allM,'subtotal')),'r'),td(eur2(sumM(allM,'iva')),'r'),td(eur2(sumM(allM,'total')),'r')],'tot');
@@ -281,13 +281,19 @@ function repSendOpen(){
   document.body.append(ov) }
 /* Bloque 4 · Aviso interno (no forma parte del informe ni del PDF): lo declarado por el técnico frente al justificante de compra.
    Importe declarado = líneas de material de la orden. Coste acreditado = justificantes aprobados. El importe a facturar lo decide AMJ. */
-function repMatCheck(L){ const conM=L.filter(o=>(MAT[o.id]||[]).length); if(!conM.length) return null; const box=el('div','repmsg repmat');
-  if(!CTX){ box.textContent=CTX===null?'Materiales: no se pueden comprobar los justificantes de compra (el servidor aún no ofrece ese dato). Revisa los importes antes de enviar.':'Materiales: comprobando justificantes…'; return box }
-  const filas=[]; conM.forEach(o=>{ const decl=MAT[o.id].reduce((a,m)=>a+Number(m.total||0),0), J=(CTX[o.id]&&CTX[o.id].justificantes)||[], ok=J.filter(j=>j.estado==='approved'), acr=ok.reduce((a,j)=>a+Number(j.aceptado!=null?j.aceptado:j.total||0),0);
-    const est=ok.length?'aprobado':J.some(j=>j.estado==='rejected')?'rechazado':J.length?'pendiente':'ausente', dif=Math.round((decl-acr)*100)/100;
-    if(est!=='aprobado') filas.push('AMJ-'+o.ref+': declarado '+eur2(decl)+' · justificante '+est); else if(Math.abs(dif)>=0.01) filas.push('AMJ-'+o.ref+': declarado '+eur2(decl)+' · acreditado con justificante '+eur2(acr)+' · diferencia '+eur2(dif)) });
-  if(!filas.length){ box.textContent='Materiales: los importes declarados coinciden con los justificantes aprobados.'; box.classList.add('ok'); return box }
-  box.append(el('b',null,'Materiales por revisar antes de enviar (este aviso no sale en el informe): '),document.createTextNode(filas.length+' de '+conM.length+' órdenes con materiales.')); const ul=el('ul'); filas.forEach(f=>ul.append(el('li',null,f))); box.append(ul); return box }
+/* Materiales que van al informe del cliente empresa (decisión de Antonio, 21/11/2026): el importe del ticket aceptado o, sin ticket,
+   el autorizado por AMJ (dato del servidor: mat_aceptado). Sin ese dato del servidor se muestran los declarados y el aviso interno lo dice.
+   Una orden con material declarado pero sin importe aceptado (pendiente de justificar) no entra en el informe. */
+function repMat(o){ const D=MAT[o.id]||[], x=CTX&&CTX[o.id]; if(!x||!('mat_aceptado' in x)) return D; const a=Number(x.mat_aceptado||0); if(!(a>0)) return [];
+  const base=Math.round(a/1.21*100)/100; return [{description:D.map(m=>(m.description||'—')+(Number(m.quantity||1)!==1?' × '+Number(m.quantity):'')).join('; ')||'Materiales autorizados',quantity:1,unit_price:base,subtotal:base,iva:Math.round((a-base)*100)/100,total:a}] }
+function repMatCheck(L){ const conM=L.filter(o=>(MAT[o.id]||[]).length||repMat(o).length); if(!conM.length) return null; const box=el('div','repmsg repmat');
+  if(!CTX){ box.textContent=CTX===null?'Materiales: el servidor aún no ofrece el importe aceptado de cada orden. El informe muestra los importes DECLARADOS por los técnicos (ticket + 21 %), no los del ticket. No lo envíes así.':'Materiales: comprobando importes…'; return box }
+  const filas=[]; conM.forEach(o=>{ const decl=(MAT[o.id]||[]).reduce((a,m)=>a+Number(m.total||0),0), cli=repMat(o).reduce((a,m)=>a+Number(m.total||0),0), x=CTX[o.id]||{}, J=x.justificantes||[];
+    const est=x.mat_motivo==='AUTHORIZED'?'autorizado por AMJ sin ticket':J.some(j=>j.estado==='approved')?'ticket aprobado':J.some(j=>j.estado==='rejected')?'ticket rechazado':J.length?'ticket pendiente':'sin ticket';
+    if(!(cli>0)) filas.push('AMJ-'+o.ref+': declarado '+eur2(decl)+' · '+est+' · NO entra en el informe hasta que se justifique o lo autorices');
+    else if(Math.abs(decl-cli)>=0.01) filas.push('AMJ-'+o.ref+': en el informe '+eur2(cli)+' ('+est+') · declarado por el técnico '+eur2(decl)) });
+  box.append(el('b',null,'Materiales (este aviso no sale en el informe): '),document.createTextNode('el informe muestra el importe del ticket o el autorizado por AMJ.'+(filas.length?' Diferencias con lo declarado:':' Coincide con lo declarado en todas las órdenes.')));
+  if(filas.length){ const ul=el('ul'); filas.forEach(f=>ul.append(el('li',null,f))); box.append(ul) } else box.classList.add('ok'); return box }
 const eur2=v=>Number(v||0).toLocaleString('es-ES',{minimumFractionDigits:2,maximumFractionDigits:2})+' €';
 /* ---------- datos ---------- */
 const STATUS={pending_review:['Pendiente de revisión','s-pending','new'],pending_assignment:['Pendiente de asignar','s-pending','new'],
@@ -560,7 +566,7 @@ const SECS={
      const tb=el('table','reptb sel wk'), hr=el('tr'); ['','Cliente','Órdenes finalizadas','Inmuebles','Materiales con IVA'].forEach((h,i)=>hr.append(el('th',i?null:'ck',h))); const th=el('thead'); th.append(hr); const bd=el('tbody');
      if(!wcl.length){ const r=el('tr'), e=el('td','empty','No hay órdenes terminadas '+(MS?'este mes':'esta '+PW)+'.'); e.colSpan=5; r.append(e); bd.append(r) }
      wcl.forEach(c=>{ const G=LA.filter(o=>o.cl===c), r=el('tr'), k=el('td','ck'), ck=el('input'); ck.type='checkbox'; ck.checked=repSelW.has(c); ck.onchange=()=>{ ck.checked?repSelW.add(c):repSelW.delete(c); updSel() }; k.append(ck);
-       r.append(k,el('td','b',clName(c)),el('td',null,String(G.length)),el('td',null,String(new Set(G.map(o=>o.piso||o.ad)).size)),el('td',null,G.every(o=>o.id in MAT)?eur2(G.reduce((a,o)=>a+MAT[o.id].reduce((x,m)=>x+Number(m.total||0),0),0)):'…')); bd.append(r) });
+       r.append(k,el('td','b',clName(c)),el('td',null,String(G.length)),el('td',null,String(new Set(G.map(o=>o.piso||o.ad)).size)),el('td',null,G.every(o=>o.id in MAT)?eur2(G.reduce((a,o)=>a+repMat(o).reduce((x,m)=>x+Number(m.total||0),0),0)):'…')); bd.append(r) });
      tb.append(th,bd); card.append(tb);
      return [ctl,src('Informe '+ADJ+' completo de cada cliente, con todos los trabajos '+DELA+(MS?' y sus KPI':'')+'. Marca la casilla del cliente y pulsa «Ver» para verlo como lo recibirá, o «Enviar por email».'),card] }
    if(repView){ repEnsure(L.map(o=>o.id)); const cs=new Set(L.map(o=>o.cl)); const out=[ctl]; if(cs.size>1) out.push(el('div','repmsg','Has marcado órdenes de '+cs.size+' clientes distintos: para enviar, marca solo las de un cliente.')); out.push(src('Así lo verá el cliente: solo las órdenes que has marcado.'),wrap([repFmt(L,repDay,repDay,false)])); return out }
