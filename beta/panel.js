@@ -178,6 +178,12 @@ function repModel(d){
   }
   return out }
 function repLogo(){ const im=document.querySelector('.brand img'); if(!im||!im.naturalWidth) return ''; try{ const s=Math.min(1,640/im.naturalWidth), cv=document.createElement('canvas'); cv.width=Math.round(im.naturalWidth*s); cv.height=Math.round(im.naturalHeight*s); const x=cv.getContext('2d'); x.fillStyle='#fff'; x.fillRect(0,0,cv.width,cv.height); x.drawImage(im,0,0,cv.width,cv.height); return cv.toDataURL('image/jpeg',.92) }catch(e){ return '' } }
+/* Visor propio (PDF.js): no depende del visor del navegador ni de extensiones como Adobe Acrobat */
+let pdfjsP=null;
+function repPdfJs(){ return pdfjsP||(pdfjsP=new Promise((ok,ko)=>{ const sc=document.createElement('script'); sc.src='vendor/pdf.min.js'; sc.onload=()=>{ const L=window.pdfjsLib; if(!L){ ko(new Error('visor no disponible')); return } L.GlobalWorkerOptions.workerSrc='vendor/pdf.worker.min.js'; ok(L) }; sc.onerror=()=>{ pdfjsP=null; ko(new Error('no se pudo cargar el visor')) }; document.head.append(sc) })) }
+async function repPdfView(bytes,host){ host.textContent='Abriendo el PDF…'; const L=await repPdfJs(), pdf=await L.getDocument({data:bytes.slice(0)}).promise; host.textContent='';
+  const wCss=Math.min(host.clientWidth-24,900), dpr=Math.min(window.devicePixelRatio||1,2);
+  for(let n=1;n<=pdf.numPages;n++){ const pg=await pdf.getPage(n), v0=pg.getViewport({scale:1}), vp=pg.getViewport({scale:wCss/v0.width*dpr}), cv=document.createElement('canvas'); cv.width=Math.round(vp.width); cv.height=Math.round(vp.height); cv.style.width=wCss+'px'; cv.className='rpmp'; host.append(cv); await pg.render({canvasContext:cv.getContext('2d'),viewport:vp}).promise } }
 async function repCall(body){ const r=await fetch(SB+'/functions/v1/amj-informes-enviar',{method:'POST',headers:{...(await authHdr()),'Content-Type':'application/json'},body:JSON.stringify(body)}); let j={}; try{ j=await r.json() }catch(e){} if(!r.ok||!j.ok) throw new Error(j.error||('HTTP '+r.status)); return j }
 function repSendOpen(){
   const docs=[...document.querySelectorAll('#obody .rf')].filter(d=>d._rep); if(!docs.length) return;
@@ -201,8 +207,9 @@ function repSendOpen(){
     bv.onclick=async()=>{ busy(true); say('Generando el PDF… (puede tardar si hay muchas fotos)');
       try{ const j=await repCall({...base(),accion:'pdf'}); const bin=atob(j.pdf_b64), u=new Uint8Array(bin.length); for(let i=0;i<bin.length;i++) u[i]=bin.charCodeAt(i); const url=URL.createObjectURL(new Blob([u],{type:'application/pdf'}));
         say('PDF listo: '+j.paginas+(j.paginas===1?' página, ':' páginas, ')+j.fotos+' fotos, '+(j.bytes/1048576).toFixed(1).replace('.',',')+' MB. ','ok');
-        const ab=el('a','rpmlk','Abrir en otra pestaña'); ab.href=url; ab.target='_blank'; const dl=el('a','rpmlk','Descargar PDF'); dl.href=url; dl.download=j.archivo||(archivo+'.pdf'); st.append(ab,document.createTextNode(' · '),dl);
-        const old=card.querySelector('.rpmv'); if(old) old.remove(); const fr=el('iframe','rpmv'); fr.src=url; fr.title='PDF que se enviará'; card.append(fr); box.classList.add('wide'); fr.scrollIntoView({behavior:'smooth',block:'nearest'}) }
+        const dl=el('a','rpmlk','Descargar PDF'); dl.href=url; dl.download=j.archivo||(archivo+'.pdf'); st.append(dl);
+        const old=card.querySelector('.rpmv'); if(old) old.remove(); const host=el('div','rpmv'); card.append(host); box.classList.add('wide'); host.scrollIntoView({behavior:'smooth',block:'nearest'});
+        try{ await repPdfView(u,host) }catch(e2){ host.textContent='No se pudo mostrar aquí el PDF ('+e2.message+'). Usa «Descargar PDF».' } }
       catch(e){ say('No se pudo generar el PDF: '+e.message,'err') } finally{ busy(false) } };
     bs.onclick=async()=>{ const para=to.value.split(/[,;\s]+/).map(v=>v.trim()).filter(Boolean); if(!para.length||!para.every(v=>/^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(v))){ say('Escribe un correo de destinatario válido.','err'); to.focus(); return }
       if(!su.value.trim()||!tx.value.trim()){ say('Faltan el asunto o el texto.','err'); return }
