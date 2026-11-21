@@ -6,7 +6,7 @@
 const SB='https://biwjrbcfupmbpoxnrolt.supabase.co', KEY='sb_publishable_ywkQpKdfMksufdqWkv-fyA_OtcxTXEm';
 const TZ='Europe/Madrid', POLL=15000, PAGE=100, MAXPAGES=200, STORE='amj.panel.session';
 const $=id=>document.getElementById(id);
-let session=null, WARN='', TEST=new Set(), T=null, M=null, P=null, RH=null, payT='', sec='ordenes', kpiDays='all', kpiFrom='', kpiTo='', RV=null, CP=null, repCl='', repDay='', repPer='dia', repSel=new Set(), repSelW=new Set(), repView=false, repMsg='', O=[], prevRev={}, view='all', lastOk=0, timer=null, loading=false;
+let session=null, WARN='', TEST=new Set(), T=null, M=null, P=null, RH=null, payT='', sec='ordenes', kpiDays='all', kpiFrom='', kpiTo='', RV=null, CP=null, repCl='', repDay='', repPer='dia', repSel=new Set(), repSelW=new Set(), repView=false, repAuto=false, repMsg='', O=[], prevRev={}, view='all', lastOk=0, timer=null, loading=false;
 
 /* ---------- sesión ---------- */
 function storage(){ try{ return localStorage.getItem(STORE)?localStorage:sessionStorage }catch(e){ return null } }
@@ -56,7 +56,7 @@ function repThumb(m){ const a=el('a','rth'); a.href='#'; a.title=m.caption||''; 
 function repPhotos(o){ const L=MED[o.id]; const w=el('div','rph'); if(L===undefined){ w.append(el('span','muted','Cargando fotos…')); return w }
   if(!L.length){ w.append(el('span','muted','Sin fotos')); return w } L.forEach(m=>w.append(repThumb(m))); return w }
 /* Informes con el formato que AMJ envía al cliente (vista «Ver»). Diario: órdenes marcadas. Semanal: informe completo de la semana de un cliente. */
-function repFmt(L,d0,d1,WK,QN,MS){ const PW=MS?'mes':QN?'quincena':'semana', DELA=MS?'del mes':'de la '+PW;
+function repFmt(L,d0,d1,WK,QN,MS){ const addD0=(d,n)=>{ const x=new Date(d+'T12:00:00'); x.setDate(x.getDate()+n); return x.toLocaleDateString('sv-SE') }; const PW=MS?'mes':QN?'quincena':'semana', DELA=MS?'del mes':'de la '+PW;
   const fd=(d,o)=>new Date(d+'T12:00:00').toLocaleDateString('es-ES',o), cap1=t=>t?t.charAt(0).toUpperCase()+t.slice(1).toLowerCase():'', dm=d=>fd(d,{day:'2-digit',month:'2-digit'});
   const cls=[...new Set(L.map(o=>o.cl))], one=cls.length===1, cname=cls.map(clName).join(' + '), city=[...new Set(L.map(o=>cap1(o.loc)).filter(Boolean))].join(' / ');
   const code=o=>(o.piso||o.ad||'—').replace(/^(ENSO|HELP)-/,''), dlong=fd(d1,{day:'numeric',month:'long',year:'numeric'});
@@ -100,8 +100,9 @@ function repFmt(L,d0,d1,WK,QN,MS){ const PW=MS?'mes':QN?'quincena':'semana', DEL
     const days={}; days[d0]={c:0,a:0,r:0,x:0}; days[dc]=days[dc]||{c:0,a:0,r:0,x:0}; const add=(s,k)=>{ if(inP(s)) (days[dayOf(s)]=days[dayOf(s)]||{c:0,a:0,r:0,x:0})[k]++ };
     mine.forEach(o=>{ add(o.ca,'c'); add(o.sa,'a'); if(o.st==='completed') add(o.fa,'r') });
     const lc=lineChart('Flujo de órdenes del mes',days,[['c','Recibidas','#13385f'],['a','Atendidas (empezadas)','#1b8fd9'],['r','Resueltas','#16a36a']]); lc.classList.add('rf-ch'); doc.append(lc);
+    { const SER=[['c','Recibidas','#13385f'],['a','Atendidas (empezadas)','#1b8fd9'],['r','Resueltas','#16a36a']], ks=[]; for(let a=d0;a<=dc;a=addD0(a,1)) ks.push(a); lc._m={t:'line',title:'Flujo de órdenes del mes',labels:ks.map(k=>fd(k,{day:'2-digit',month:'short'})),series:SER.map(([k,n,c])=>({n,c,v:ks.map(d=>(days[d]||{})[k]||0)}))} }
     const cnt=(list,key)=>{ const m={}; list.forEach(o=>{ const k=key(o)||'—'; m[k]=(m[k]||0)+1 }); return Object.entries(m).sort((a,b)=>b[1]-a[1]) };
-    const dg=el('div','rf-dn'); dg.append(donut('Por tipo de trabajo',cnt(rec,o=>o.sv)),donut('Por estado',cnt(rec,o=>(STATUS[o.st]||[o.st])[0])),donut('Por ciudad',cnt(rec,o=>cap1(o.loc)))); doc.append(dg);
+    const DN=[['Por tipo de trabajo',cnt(rec,o=>o.sv)],['Por estado',cnt(rec,o=>(STATUS[o.st]||[o.st])[0])],['Por ciudad',cnt(rec,o=>cap1(o.loc))]]; const dg=el('div','rf-dn'); DN.forEach(([t,e])=>dg.append(donut(t,e))); dg._m={t:'donuts',items:DN.map(([title,entries])=>({title,entries}))}; doc.append(dg);
     /* evolución por semana */
     doc.append(H('Evolución por semana')); const [tw,bw]=table(['Semana','Recibidas','Finalizadas','Inmuebles','Materiales']); const addD=(d,n)=>{ const x=new Date(d+'T12:00:00'); x.setDate(x.getDate()+n); return x.toLocaleDateString('sv-SE') };
     for(let a=d0;a<=dc;){ const wd=(new Date(a+'T12:00:00').getDay()+6)%7; let b=addD(a,6-wd); if(b>dc) b=dc; const F=L.filter(o=>dayOf(o.fa)>=a&&dayOf(o.fa)<=b);
@@ -131,7 +132,7 @@ function repFmt(L,d0,d1,WK,QN,MS){ const PW=MS?'mes':QN?'quincena':'semana', DEL
   if(!L.length){ const e=td('No hay órdenes finalizadas en el periodo.'); e.colSpan=WK?4:3; row(bd,[e]) }
   doc.append(tb);
   if(L.length) doc.append(H('Fotos de las intervenciones'));
-  L.forEach(o=>{ const g=el('div','rf-og'); g.append(el('div','rf-oh',(WK?dm(dayOf(o.fa))+' · ':'')+'AMJ-'+o.ref+' · '+(o.work||'').replace(/\.$/,'')+' · '+code(o))); const w=repPhotos(o); w.className='rf-ph'; g.append(w); doc.append(g) });
+  L.forEach(o=>{ const g=el('div','rf-og'); g.append(el('div','rf-oh',(WK?dm(dayOf(o.fa))+' · ':'')+'AMJ-'+o.ref+' · '+(o.work||'').replace(/\.$/,'')+' · '+code(o))); const w=repPhotos(o); w.className='rf-ph'; g.append(w); g._m={id:o.id}; doc.append(g) });
   if(WK){ /* materiales */
     if((QN||MS)&&mload){ const withM=L.filter(o=>(MAT[o.id]||[]).length), tot=sumM(allM,'total'), oT=o=>sumM(MAT[o.id],'total');
       doc.append(H('Informe de materiales')); const p=el('p','rf-intro'); p.append(el('b',null,eur2(tot)+' en materiales en '+withM.length+' de las '+L.length+' órdenes finalizadas.'),document.createTextNode(' Los materiales se repercuten al mismo precio de compra del técnico, sin recargo, con el IVA desglosado.')); doc.append(p);
@@ -154,7 +155,63 @@ function repFmt(L,d0,d1,WK,QN,MS){ const PW=MS?'mes':QN?'quincena':'semana', DEL
     const open=real().filter(o=>!['completed','cancelled'].includes(o.st)&&cls.includes(o.cl)&&dayOf(o.ca)<=d1);
     if(open.length){ doc.append(H(live?'Órdenes abiertas a fecha de '+dm(dc):'Órdenes abiertas al cierre '+DELA)); const [t4,b4]=table(['Orden / inmueble','Trabajo','Estado']); open.forEach(o=>row(b4,[td('AMJ-'+o.ref+' · '+code(o),'nwr'),o.work,(STATUS[o.st]||[o.st])[0]])); doc.append(t4) } }
   const ft=el('div','rf-ft'); ft.append(el('span',null,'amjmaintenance.es · Informe para '+cname),el('span',null,'ASSET MAINTENANCE · JUST IN TIME')); doc.append(ft);
+  doc._rep={cl:cls.join('+'),cname,one,tipo:MS?'mensual':QN?'quincenal':WK?'semanal':'diario',d0,d1,per:MS?per:WK?per.replace(/^.* · /,''):dlong,ids:L.map(o=>o.id),mat:WK};
   return doc }
+/* ---------- envío de informes por email (función amj-informes-enviar: PDF adjunto) ---------- */
+const REP_COPIA='antonio@amjmaintenance.es';
+function repModel(d){
+  const tx=e=>(e?e.textContent:'').replace(/(\d) ★/g,'$1 / 5').replace(/(★+)(☆*)/g,(m,a,b)=>a.length+' / '+(a.length+b.length)).trim(), B=[], out={r1:tx(d.querySelector('.rf-tr b')),r2:tx(d.querySelector('.rf-tr span')),foot:tx(d.querySelector('.rf-ft span')),blocks:B};
+  for(const e of d.children){ const c=e.classList;
+    if(c.contains('rf-h1')) B.push({t:'h1',x:tx(e)}); else if(c.contains('rf-sub')) B.push({t:'sub',x:tx(e)}); else if(c.contains('rf-h2')) B.push({t:'h2',x:tx(e)});
+    else if(c.contains('rf-live')) B.push({t:'live',x:tx(e)}); else if(c.contains('rf-note')) B.push({t:'note',x:tx(e)});
+    else if(c.contains('rf-intro')){ const b=e.querySelector('b'); B.push({t:'p',b:b?tx(b):'',x:[...e.childNodes].filter(n=>n!==b).map(n=>n.textContent).join('').trim()}) }
+    else if(c.contains('rf-kp')) B.push({t:'tiles',cols:c.contains('rf-kpi')?4:0,items:[...e.children].map(k=>[tx(k.querySelector('b')),tx(k.querySelector('span'))])});
+    else if(c.contains('rf-steps')) B.push({t:'steps',items:[...e.children].map(k=>tx(k.querySelector('span')))});
+    else if(c.contains('rf-bars')) B.push({t:'bars',items:[...e.children].map(k=>[tx(k.querySelector('span')),Number(tx(k.querySelector('em')))||0])});
+    else if(c.contains('rf-sp')) B.push({t:'spend',items:[...e.children].map(k=>({k:tx(k.querySelector('span')),s:tx(k.querySelector('small')),a:tx(k.querySelector('b')),p:tx(k.querySelector('em')),f:(parseFloat(k.querySelector('u').style.width)||0)/100}))});
+    else if(e.tagName==='TABLE'){ const ths=[...e.querySelectorAll('thead th')]; let w=ths.map(h=>h.getBoundingClientRect().width); if(!w.every(x=>x>0)) w=ths.map(()=>1);
+      const right=ths.map((h,i)=>c.contains('mat')&&i>=3);
+      B.push({t:'table',head:ths.map(tx),w,right,rows:[...e.querySelectorAll('tbody tr')].map(r=>{ const tds=[...r.children]; if(tds.length===1&&tds[0].colSpan>1) return {span:true,c:[tx(tds[0])]};
+        return {k:r.className||'',c:tds.map(td=>{ const b=td.querySelector('b'); if(!b) return tx(td); const rest=[...td.childNodes].filter(n=>n!==b).map(n=>n.nodeName==='BR'?'\n':n.textContent).join(''); return {b:tx(b),x:rest.replace(/(\d) ★/g,'$1 / 5')} })} })}) }
+    else if(c.contains('rf-og')) B.push({t:'photos',title:tx(e.querySelector('.rf-oh')),paths:(MED[e._m.id]||[]).map(m=>m.object_path)});
+    else if(e._m&&(e._m.t==='line'||e._m.t==='donuts')) B.push(e._m);
+  }
+  return out }
+function repLogo(){ const im=document.querySelector('.brand img'); if(!im||!im.naturalWidth) return ''; try{ const s=Math.min(1,640/im.naturalWidth), cv=document.createElement('canvas'); cv.width=Math.round(im.naturalWidth*s); cv.height=Math.round(im.naturalHeight*s); const x=cv.getContext('2d'); x.fillStyle='#fff'; x.fillRect(0,0,cv.width,cv.height); x.drawImage(im,0,0,cv.width,cv.height); return cv.toDataURL('image/jpeg',.92) }catch(e){ return '' } }
+async function repCall(body){ const r=await fetch(SB+'/functions/v1/amj-informes-enviar',{method:'POST',headers:{...(await authHdr()),'Content-Type':'application/json'},body:JSON.stringify(body)}); let j={}; try{ j=await r.json() }catch(e){} if(!r.ok||!j.ok) throw new Error(j.error||('HTTP '+r.status)); return j }
+function repSendOpen(){
+  const docs=[...document.querySelectorAll('#obody .rf')].filter(d=>d._rep); if(!docs.length) return;
+  if(docs.some(d=>!d._rep.ids.every(id=>id in MED&&id in MAT))){ repMsg='Todavía se están cargando las fotos y los materiales. Espera unos segundos y vuelve a pulsar «Enviar por email».'; renderSec(); return }
+  const old=$('rpm'); if(old) old.remove();
+  const ov=el('div','rpm'); ov.id='rpm'; const box=el('div','rpmb'); ov.append(box); const hd=el('div','rpmh'); const x=el('button','out','✕ Cerrar'); x.onclick=()=>ov.remove(); hd.append(el('h3',null,'Enviar por email'),x); box.append(hd);
+  const logo=repLogo(), fdl=d=>new Date(d+'T12:00:00').toLocaleDateString('es-ES',{day:'2-digit',month:'2-digit',year:'numeric'});
+  docs.forEach(d=>{ const R=d._rep, model=repModel(d), card=el('div','rpmc'), nombre='Informe '+R.tipo+' de servicio '+R.cname;
+    const perTxt=R.tipo==='diario'?'del '+R.per:R.tipo==='mensual'?'de '+R.per:R.per, archivo='Informe_'+R.tipo+'_'+R.cl.replace(/\+/g,'-')+'_'+R.d0+(R.d1!==R.d0?'_'+R.d1:'');
+    card.append(el('h4',null,nombre+' · '+(R.tipo==='diario'?fdl(R.d0):R.per)));
+    if(!R.one){ card.append(el('div','rpmw','Este informe mezcla órdenes de varios clientes. Vuelve atrás y marca solo las de un cliente para poder enviarlo.')); box.append(card); return }
+    const KEY2='amj.panel.repto.'+R.cl; let saved=''; try{ saved=localStorage.getItem(KEY2)||'' }catch(e){}
+    const fld=(lab,inp)=>{ const l=el('label','rpml'); l.append(el('span',null,lab),inp); card.append(l); return inp };
+    const to=fld('Para (correo del cliente; varios separados por coma)',el('input')); to.type='text'; to.value=saved; to.placeholder='nombre@cliente.com'; to.autocomplete='off';
+    const su=fld('Asunto',el('input')); su.type='text'; su.value=nombre+' · '+(R.tipo==='diario'?fdl(R.d0):R.per);
+    const tx=fld('Texto del correo',el('textarea')); tx.rows=9; tx.value='Buenas tardes,\n\nAdjuntamos el informe '+R.tipo+' de servicio de '+R.cname+' '+perTxt+'.\n\nEn el PDF encontrará el detalle de las intervenciones por inmueble, con el informe del técnico y las fotografías de cada trabajo'+(R.mat?', y la relación de materiales':'')+'.\n\nQuedamos a su disposición para cualquier aclaración.\n\nUn saludo,\nAntonio Martins Junior\nAMJ Maintenance · Asset maintenance, just in time';
+    const cc=el('input'); cc.type='checkbox'; cc.checked=true; const ccl=el('label','rpmk'); ccl.append(cc,document.createTextNode(' Enviarme una copia a '+REP_COPIA)); card.append(ccl);
+    const st=el('div','rpms'), bar=el('div','rpma'), bv=el('button','out','📄 Ver el PDF que se enviará'), bs=el('button','go','✉ Enviar ahora'); bar.append(bv,bs); card.append(bar,st);
+    const clave=(crypto.randomUUID?crypto.randomUUID():String(Date.now())+Math.random().toString(36).slice(2)).replace(/[^A-Za-z0-9-]/g,'');
+    const base=()=>({docs:[model],logo,archivo}), say=(t,k)=>{ st.textContent=t; st.className='rpms'+(k?' '+k:'') }, busy=b=>{ bv.disabled=bs.disabled=b };
+    bv.onclick=async()=>{ const w=window.open('about:blank','_blank'); busy(true); say('Generando el PDF… (puede tardar si hay muchas fotos)');
+      try{ const j=await repCall({...base(),accion:'pdf'}); const bin=atob(j.pdf_b64), u=new Uint8Array(bin.length); for(let i=0;i<bin.length;i++) u[i]=bin.charCodeAt(i); const url=URL.createObjectURL(new Blob([u],{type:'application/pdf'}));
+        if(w) w.location=url; else { const a=el('a',null,'Abrir el PDF'); a.href=url; a.target='_blank'; st.textContent=''; st.append(a) } say('PDF listo: '+j.paginas+(j.paginas===1?' página, ':' páginas, ')+j.fotos+' fotos, '+(j.bytes/1048576).toFixed(1).replace('.',',')+' MB.'+(w?'':' '),'ok'); if(!w){ const a=el('a',null,' Abrir el PDF'); a.href=url; a.target='_blank'; st.append(a) } }
+      catch(e){ if(w) w.close(); say('No se pudo generar el PDF: '+e.message,'err') } finally{ busy(false) } };
+    bs.onclick=async()=>{ const para=to.value.split(/[,;\s]+/).map(v=>v.trim()).filter(Boolean); if(!para.length||!para.every(v=>/^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(v))){ say('Escribe un correo de destinatario válido.','err'); to.focus(); return }
+      if(!su.value.trim()||!tx.value.trim()){ say('Faltan el asunto o el texto.','err'); return }
+      if(bs.dataset.ok!=='1'){ bs.dataset.ok='1'; bs.textContent='✉ Confirmar: enviar a '+para.join(', '); say('Pulsa otra vez para confirmar el envío a '+para.join(', ')+'.'); return }
+      busy(true); say('Enviando… (puede tardar si hay muchas fotos)');
+      try{ const j=await repCall({...base(),accion:'enviar',para,copia:cc.checked?REP_COPIA:'',asunto:su.value.trim(),texto:tx.value.trim(),clave}); try{ localStorage.setItem(KEY2,para.join(', ')) }catch(e){}
+        say('Enviado a '+j.para.join(', ')+' · '+j.paginas+(j.paginas===1?' página, ':' páginas, ')+j.fotos+' fotos'+(cc.checked?' · copia a '+REP_COPIA:'')+'.','ok'); bs.textContent='✓ Enviado'; bv.disabled=false }
+      catch(e){ say('No se envió: '+e.message,'err'); bs.dataset.ok=''; bs.textContent='✉ Enviar ahora'; busy(false) } };
+    to.oninput=()=>{ if(bs.dataset.ok==='1'&&!bs.disabled){ bs.dataset.ok=''; bs.textContent='✉ Enviar ahora' } };
+    box.append(card) });
+  document.body.append(ov) }
 const eur2=v=>Number(v||0).toLocaleString('es-ES',{minimumFractionDigits:2,maximumFractionDigits:2})+' €';
 /* ---------- datos ---------- */
 const STATUS={pending_review:['Pendiente de revisión','s-pending','new'],pending_assignment:['Pendiente de asignar','s-pending','new'],
@@ -405,7 +462,8 @@ const SECS={
    const bVer=el('button','out'), bEnv=el('button','out'), bBack=el('button','out','◀ Volver a seleccionar'); bVer.style.marginLeft=bEnv.style.marginLeft=bBack.style.marginLeft='0';
    let selN=()=>0; const updSel=()=>{ const n=selN(); bVer.textContent='👁 Ver ('+n+')'; bEnv.textContent='✉ Enviar por email ('+n+')'; bVer.disabled=bEnv.disabled=!n };
    bVer.onclick=()=>{ repView=true; repMsg=''; renderSec() }; bBack.onclick=()=>{ repView=false; repMsg=''; renderSec() };
-   bEnv.onclick=()=>{ repMsg='Envío por email todavía sin conectar: falta tu OK para crear la función de envío en el servidor.'; renderSec() };
+   bEnv.onclick=()=>{ repMsg=''; if(!repView){ repView=true; repAuto=true; renderSec(); return } repSendOpen() };
+   if(repAuto){ repAuto=false; setTimeout(repSendOpen,0) }
    const row=el('div','repbar'); if(repView) row.append(bBack,bEnv,pr); else row.append(scl,prev,dIn,next,bVer,bEnv); ctl.append(seg,row); if(repMsg) ctl.append(el('div','repmsg',repMsg));
    /* periodo */
    let d0=repDay, d1=repDay; if(WK){ const wd=(new Date(repDay+'T12:00:00').getDay()+6)%7; d0=addD(repDay,-wd); d1=addD(d0,6) }
