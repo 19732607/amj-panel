@@ -198,10 +198,12 @@ function repSendOpen(){
     const st=el('div','rpms'), bar=el('div','rpma'), bv=el('button','out','📄 Ver el PDF que se enviará'), bs=el('button','go','✉ Enviar ahora'); bar.append(bv,bs); card.append(bar,st);
     const clave=(crypto.randomUUID?crypto.randomUUID():String(Date.now())+Math.random().toString(36).slice(2)).replace(/[^A-Za-z0-9-]/g,'');
     const base=()=>({docs:[model],logo,archivo}), say=(t,k)=>{ st.textContent=t; st.className='rpms'+(k?' '+k:'') }, busy=b=>{ bv.disabled=bs.disabled=b };
-    bv.onclick=async()=>{ const w=window.open('about:blank','_blank'); busy(true); say('Generando el PDF… (puede tardar si hay muchas fotos)');
+    bv.onclick=async()=>{ busy(true); say('Generando el PDF… (puede tardar si hay muchas fotos)');
       try{ const j=await repCall({...base(),accion:'pdf'}); const bin=atob(j.pdf_b64), u=new Uint8Array(bin.length); for(let i=0;i<bin.length;i++) u[i]=bin.charCodeAt(i); const url=URL.createObjectURL(new Blob([u],{type:'application/pdf'}));
-        if(w) w.location=url; else { const a=el('a',null,'Abrir el PDF'); a.href=url; a.target='_blank'; st.textContent=''; st.append(a) } say('PDF listo: '+j.paginas+(j.paginas===1?' página, ':' páginas, ')+j.fotos+' fotos, '+(j.bytes/1048576).toFixed(1).replace('.',',')+' MB.'+(w?'':' '),'ok'); if(!w){ const a=el('a',null,' Abrir el PDF'); a.href=url; a.target='_blank'; st.append(a) } }
-      catch(e){ if(w) w.close(); say('No se pudo generar el PDF: '+e.message,'err') } finally{ busy(false) } };
+        say('PDF listo: '+j.paginas+(j.paginas===1?' página, ':' páginas, ')+j.fotos+' fotos, '+(j.bytes/1048576).toFixed(1).replace('.',',')+' MB. ','ok');
+        const ab=el('a','rpmlk','Abrir en otra pestaña'); ab.href=url; ab.target='_blank'; const dl=el('a','rpmlk','Descargar PDF'); dl.href=url; dl.download=j.archivo||(archivo+'.pdf'); st.append(ab,document.createTextNode(' · '),dl);
+        const old=card.querySelector('.rpmv'); if(old) old.remove(); const fr=el('iframe','rpmv'); fr.src=url; fr.title='PDF que se enviará'; card.append(fr); box.classList.add('wide'); fr.scrollIntoView({behavior:'smooth',block:'nearest'}) }
+      catch(e){ say('No se pudo generar el PDF: '+e.message,'err') } finally{ busy(false) } };
     bs.onclick=async()=>{ const para=to.value.split(/[,;\s]+/).map(v=>v.trim()).filter(Boolean); if(!para.length||!para.every(v=>/^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(v))){ say('Escribe un correo de destinatario válido.','err'); to.focus(); return }
       if(!su.value.trim()||!tx.value.trim()){ say('Faltan el asunto o el texto.','err'); return }
       if(bs.dataset.ok!=='1'){ bs.dataset.ok='1'; bs.textContent='✉ Confirmar: enviar a '+para.join(', '); say('Pulsa otra vez para confirmar el envío a '+para.join(', ')+'.'); return }
