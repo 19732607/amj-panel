@@ -15,7 +15,7 @@ srv = http.server.ThreadingHTTPServer(("127.0.0.1", 8791), functools.partial(H, 
 
 PREPARA = """()=>{ __t(`session={access_token:'x',expires_at:Date.now()+9e9};
   O=normalize([1,2].map(i=>({id:i,reference:900+i,revision:1,status:'completed',service:'Fontanería',description:'FICT-P'+i+' | Trabajo ficticio '+i,address:'',locality:'Ciudad',
-    created_at:'2026-11-18T09:00:00Z',started_at:'2026-11-19T09:00:00Z',finished_at:'2026-11-19T10:00:00Z',technician_name:'Nombre Apellido',technician_id:'t1',customer_name:'',report:'Informe ficticio.'})));
+    created_at:'2026-11-18T09:00:00Z',started_at:'2026-11-19T09:00:00Z',finished_at:'2026-11-19T10:00:00Z',technician_name:'Nombre Apellido',technician_id:'t1',customer_name:'FICT',report:'Informe ficticio.'})));
   computeTags(); RV=[]; [1,2].forEach(i=>{ MED[i]=[{id:'m'+i,object_path:'o/'+i+'.jpg'}]; THU['m'+i]='data:image/gif;base64,R0lGODlhAQABAAAAACw='; MAT[i]=[] });
   document.querySelectorAll('[hidden]').forEach(e=>e.hidden=false); document.getElementById('nw').hidden=true; document.getElementById('login').style.display='none'; lastOk=1;
   sec='informes'; repPer='dia'; repDay='2026-11-19'; repCl=''; repSel=new Set([1,2]); repView=true; renderSec(); repSendOpen();`) }"""
@@ -28,22 +28,36 @@ async def main():
         async def funcion(route):
             cuerpo = json.loads(route.request.post_data); llamadas.append(cuerpo)
             if cuerpo["accion"] == "pdf":
-                return await route.fulfill(json={"ok": True, "enviado": False, "paginas": 1, "bytes": len(PDF), "archivo": "Informe_ficticio.pdf", "sha256": SHA, "caduca": 9e15, "sello": "SELLO.FICTICIO",
+                return await route.fulfill(json={"ok": True, "enviado": False, "paginas": 1, "bytes": len(PDF), "archivo": "Informe_ficticio.pdf", "sha256": SHA, "caduca": 9e15, "sello": "SELLO.FICTICIO", "cliente": {"codigo": "FICTICIO", "nombre": "Cliente Ficticio"}, "ordenes_por_prefijo": [902], "destinatarios": {"autorizados": ["destinatario@prueba.example"], "solo_ficticios": False},
                     "fotos": {"solicitadas": 2, "incluidas": 1, "faltan": 1, "detalle": [{"titulo": "AMJ-902 · Trabajo ficticio 2 · P2", "n": 1}]}, "pdf_b64": base64.b64encode(PDF).decode()})
             m = modo["enviar"]
             if m == "incierto": return await route.fulfill(status=504, json={"error": "sin respuesta", "codigo": "RESULTADO_INCIERTO"})
             if m == "distinto": return await route.fulfill(status=409, json={"error": "El PDF que se intenta enviar no es el que se revisó. Pulsa otra vez «Ver el PDF que se enviará», revísalo y vuelve a enviar.", "codigo": "PDF_DISTINTO"})
             return await route.fulfill(json={"ok": True, "enviado": True, "para": cuerpo["para"], "proveedor": "correo-1", "archivo": "Informe_ficticio.pdf", "bytes": len(PDF), "sha256": SHA, "clave": "k"})
         await pg.route("**/functions/v1/amj-informes-enviar", funcion)
+        fuente = {"modo": "igual"}
+        async def datos(route):                                                    # lectura de fotos y materiales (se repite antes de cada PDF)
+            if fuente["modo"] == "falla": return await route.fulfill(status=500, json={"message": "caída"})
+            if "amj_order_materials" in route.request.url: return await route.fulfill(json=[])
+            return await route.fulfill(json=[{"id": "m%d" % i, "order_id": i, "object_path": "o/%d.jpg" % i} for i in (1, 2)] + ([{"id": "m9", "order_id": 2, "object_path": "o/9.jpg"}] if fuente["modo"] == "cambia" else []))
+        await pg.route("**/rest/v1/amj_service_media*", datos); await pg.route("**/rest/v1/amj_order_materials*", datos)
         await pg.goto("http://127.0.0.1:8791/beta/index.html"); await pg.evaluate(PREPARA)
         estado = lambda: pg.inner_text(".rpms"); enviar = pg.locator(".rpma .go"); ver = pg.locator(".rpma .out").first
         await pg.fill(".rpml input >> nth=0", "destinatario@prueba.example")
         await enviar.click(); ok("Primero pulsa" in await estado() and not llamadas, "no deja enviar sin haber generado y revisado el PDF")
-        await ver.click(); await pg.wait_for_selector(".rpmv canvas")
+        fuente["modo"] = "falla"; await ver.click(); await pg.wait_for_function("document.querySelector('.rpms').textContent.includes('No se han podido releer')")
+        ok(not llamadas, "bloque 2 · si no se pueden releer fotos y materiales, no se genera el PDF")
+        fuente["modo"] = "cambia"; await ver.click(); await pg.wait_for_function("!document.getElementById('rpm')")
+        ok(not llamadas and "AMJ-902 han cambiado" in await pg.inner_text("#obody") and await pg.evaluate("()=>__t('MED[2].length')") == 2, "bloque 2 · si una foto cambió, se actualiza el informe y se pide revisarlo antes de generar")
+        await pg.evaluate("()=>__t('repSendOpen()')"); await pg.fill(".rpml input >> nth=0", "intruso@otro.example"); await ver.click(); await pg.wait_for_selector(".rpmv canvas")
+        i0 = llamadas[0]["informe"]; ok(i0["cliente"] == "FICT" and i0["refs"] == [901, 902] and i0["tipo"] == "diario" and i0["desde"] == i0["hasta"] == i0["corte"] == "2026-11-19", "bloque 2 · el panel envía cliente, periodo, corte y órdenes para que el servidor los compruebe")
+        f = await pg.inner_text(".rpmf"); ok("Cliente comprobado por el servidor: Cliente Ficticio" in f and "sin ficha de cliente): AMJ-902" in f and "Destinatarios autorizados de este cliente: destinatario@prueba.example" in f, "bloque 2 · se muestran el cliente comprobado, las órdenes identificadas por prefijo y los destinatarios autorizados")
+        await enviar.click(); ok("No están autorizados para este cliente: intruso@otro.example" in await estado() and len(llamadas) == 1, "bloque 2 · un destinatario no autorizado no llega a enviarse")
+        await pg.click(".rpmd a"); ok(await pg.input_value(".rpml input >> nth=0") == "destinatario@prueba.example", "bloque 2 · «Usar estos» rellena los destinatarios autorizados")
         ok(len(llamadas) == 1 and llamadas[0]["accion"] == "pdf", "«Ver» genera el PDF una vez")
-        descarga = await pg.evaluate("async()=>{ const a=document.querySelector('.rpms a[download]'); const u=new Uint8Array(await (await fetch(a.href)).arrayBuffer()); const h=await crypto.subtle.digest('SHA-256',u); return [a.download,[...new Uint8Array(h)].map(x=>x.toString(16).padStart(2,'0')).join('')] }")
+        descarga = await pg.evaluate("async()=>{ const a=document.querySelector('.rpmf a[download]'); const u=new Uint8Array(await (await fetch(a.href)).arrayBuffer()); const h=await crypto.subtle.digest('SHA-256',u); return [a.download,[...new Uint8Array(h)].map(x=>x.toString(16).padStart(2,'0')).join('')] }")
         ok(descarga == ["Informe_ficticio.pdf", SHA], "la descarga es el mismo archivo que la vista previa (misma huella)")
-        f = await pg.inner_text(".rpmf"); ok("2 solicitadas" in f and "1 incluidas" in f and "1 no se ha podido cargar" in f and "AMJ-902" in f and SHA[:12] in f, "aviso de fotos solicitadas, incluidas y ausentes, visible antes de confirmar")
+        ok("2 solicitadas" in f and "1 incluidas" in f and "1 no se ha podido cargar" in f and "AMJ-902" in f and SHA[:12] in f, "aviso de fotos solicitadas, incluidas y ausentes, visible antes de confirmar")
         await enviar.click(); ok("faltan 1 fotos" in await estado() and len(llamadas) == 1, "la confirmación recuerda las fotos que faltan y aún no envía")
         await pg.fill(".rpml input >> nth=1", "Asunto cambiado"); ok("Enviar ahora" in await enviar.inner_text(), "cambiar el asunto obliga a confirmar otra vez")
         modo["enviar"] = "incierto"; await enviar.click(); await enviar.click(); await pg.wait_for_function("document.querySelector('.rpma .go').textContent.includes('Reintentar')")

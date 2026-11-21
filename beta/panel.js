@@ -35,13 +35,22 @@ async function authHdr(){ if(!session) throw new Error('NO_SESSION'); if(Date.no
 async function rest(path){ let r=await fetch(SB+'/rest/v1/'+path,{headers:await authHdr()}); if(r.status===401){ await refresh(); r=await fetch(SB+'/rest/v1/'+path,{headers:await authHdr()}) } if(!r.ok) throw new Error('HTTP '+r.status); return r.json() }
 /* fotos y materiales por orden (solo lectura, para los informes) */
 const MED={}, MAT={}, THU={}; let repFetching=false;
+/* Antes de generar un PDF se vuelven a leer fotos y materiales. Devuelve las órdenes cuyo contenido ha cambiado; lanza error si la lectura falla o queda incompleta. */
+async function repRefresh(ids){ const nM={}, nT={}; ids.forEach(id=>{ nM[id]=[]; nT[id]=[] });
+  for(let i=0;i<ids.length;i+=40){ const ch=ids.slice(i,i+40), inl='('+ch.join(',')+')';
+    const [m,t]=await Promise.all([rest('amj_service_media?select=id,order_id,object_path,content_type,created_at,caption&state=eq.verified&content_type=like.image%2F*&order_id=in.'+inl+'&order=created_at'),
+      rest('amj_order_materials?select=order_id,position,description,quantity,unit_price,subtotal,iva,total&order_id=in.'+inl+'&order=position')]);
+    if(!Array.isArray(m)||!Array.isArray(t)) throw new Error('respuesta incompleta del servidor');
+    m.forEach(x=>{ if(nM[x.order_id]) nM[x.order_id].push(x) }); t.forEach(x=>{ if(nT[x.order_id]) nT[x.order_id].push(x) }) }
+  const fm=L=>JSON.stringify((L||[]).map(x=>x.object_path)), ft=L=>JSON.stringify((L||[]).map(x=>[x.description,Number(x.quantity),Number(x.total)]));
+  const cambian=ids.filter(id=>fm(MED[id])!==fm(nM[id])||ft(MAT[id])!==ft(nT[id])); cambian.forEach(id=>{ MED[id]=nM[id]; MAT[id]=nT[id] }); return cambian }
 async function repEnsure(ids){
   const miss=ids.filter(id=>!(id in MED)); if(!miss.length||repFetching) return; repFetching=true;
   try{ for(let i=0;i<miss.length;i+=40){ const ch=miss.slice(i,i+40), inl='('+ch.join(',')+')';
       const [m,t]=await Promise.all([rest('amj_service_media?select=id,order_id,object_path,content_type,created_at,caption&state=eq.verified&content_type=like.image%2F*&order_id=in.'+inl+'&order=created_at'),
         rest('amj_order_materials?select=order_id,position,description,quantity,unit_price,subtotal,iva,total&order_id=in.'+inl+'&order=position')]);
       ch.forEach(id=>{ MED[id]=[]; MAT[id]=[] }); m.forEach(x=>MED[x.order_id].push(x)); t.forEach(x=>MAT[x.order_id].push(x)) }
-  }catch(e){ console.warn('informes: fotos/materiales',e) } finally{ repFetching=false }
+  }catch(e){ console.warn('informes: fotos/materiales',e); repMsg='No se han podido cargar las fotos o los materiales de algunas órdenes ('+(e.message||'error de conexión')+'). El informe está incompleto: recarga la página antes de verlo o enviarlo.' } finally{ repFetching=false }
   if(sec==='informes') renderSec();
 }
 function repThumb(m){ const a=el('a','rth'); a.href='#'; a.title=m.caption||''; const im=el('img'); im.alt='Foto'; a.append(im);
@@ -163,7 +172,7 @@ function repFmt(L,d0,d1,WK,QN,MS){ const addD0=(d,n)=>{ const x=new Date(d+'T12:
     const open=real().filter(o=>cls.includes(o.cl)&&o.st!=='cancelled'&&dayOf(o.ca)<=dc&&(o.st!=='completed'||(o.fa&&dayOf(o.fa)>dc)));
     if(open.length){ doc.append(H(live?'Órdenes abiertas a fecha de '+dm(dc):'Órdenes abiertas al cierre '+DELA)); const [t4,b4]=table(['Orden / inmueble','Trabajo','Estado']); open.forEach(o=>row(b4,[td('AMJ-'+o.ref+' · '+code(o),'nwr'),o.work,o.st==='completed'?'Terminada después, el '+dm(dayOf(o.fa)):(STATUS[o.st]||[o.st])[0]])); doc.append(t4) } }
   const ft=el('div','rf-ft'); ft.append(el('span',null,'amjmaintenance.es · Informe para '+cname),el('span',null,'ASSET MAINTENANCE · JUST IN TIME')); doc.append(ft);
-  doc._rep={cl:cls.join('+'),cname,one,tipo:MS?'mensual':QN?'quincenal':WK?'semanal':'diario',d0,d1,per:MS?per:WK?per.replace(/^.* · /,''):dlong,ids:L.map(o=>o.id),mat:WK};
+  doc._rep={cl:cls.join('+'),cname,one,tipo:MS?'mensual':QN?'quincenal':WK?'semanal':'diario',d0,d1,per:MS?per:WK?per.replace(/^.* · /,''):dlong,ids:L.map(o=>o.id),refs:L.map(o=>o.ref),mat:WK};
   return doc }
 /* ---------- envío de informes por email (función amj-informes-enviar: PDF adjunto) ---------- */
 const REP_COPIA='antonio@amjmaintenance.es';
@@ -213,28 +222,40 @@ function repSendOpen(){
     const tx=fld('Texto del correo',el('textarea')); tx.rows=9; tx.value='Buenas tardes,\n\nAdjuntamos el informe '+R.tipo+' de servicio de '+R.cname+' '+perTxt+'.\n\nEn el PDF encontrará el detalle de las intervenciones por inmueble, con el informe del técnico y las fotografías de cada trabajo'+(R.mat?', y la relación de materiales':'')+'.\n\nQuedamos a su disposición para cualquier aclaración.\n\nUn saludo,\nAntonio Martins Junior\nAMJ Maintenance · Asset maintenance, just in time';
     const cc=el('input'); cc.type='checkbox'; cc.checked=true; const ccl=el('label','rpmk'); ccl.append(cc,document.createTextNode(' Enviarme una copia a '+REP_COPIA)); card.append(ccl);
     const st=el('div','rpms'), bar=el('div','rpma'), bv=el('button','out','📄 Ver el PDF que se enviará'), bs=el('button','go','✉ Enviar ahora'); bar.append(bv,bs); card.append(bar,st);
-    const base=()=>({docs:[model],logo,archivo}), say=(t,k)=>{ st.textContent=t; st.className='rpms'+(k?' '+k:'') }, busy=b=>{ bv.disabled=bs.disabled=b };
+    const hoyM=new Date().toLocaleDateString('sv-SE',{timeZone:'Europe/Madrid'}), base=()=>({docs:[model],logo,archivo,informe:{cliente:R.cl,tipo:R.tipo,desde:R.d0,hasta:R.d1,corte:R.d1<hoyM?R.d1:hoyM<R.d0?R.d0:hoyM,refs:R.refs}}), say=(t,k)=>{ st.textContent=t; st.className='rpms'+(k?' '+k:'') }, busy=b=>{ bv.disabled=bs.disabled=b };
     /* Un solo PDF: el que se genera en «Ver» es el que se ve, se descarga y se adjunta. `prev` guarda esos bytes y el sello del servidor. */
     let prev=null, incierto=false; const fot=el('div','rpmf'); card.insertBefore(fot,st);
     const pintaFotos=()=>{ fot.textContent=''; fot.className='rpmf'; if(!prev) return; const f=prev.fotos;
       fot.append(el('b',null,'Fotos: '),document.createTextNode(f.solicitadas+' solicitadas · '+f.incluidas+' incluidas en el PDF · '+f.faltan+(f.faltan===1?' no se ha podido cargar':' no se han podido cargar')+'.'));
       if(f.faltan){ fot.classList.add('warn'); fot.append(el('div',null,'Faltan en: '+f.detalle.map(d=>d.titulo.split(' · ')[0]+' ('+d.n+')').join(', ')+'. Si las necesitas, cierra, espera y vuelve a generar el PDF.')) }
+      if(prev.cliente) fot.append(el('div',null,'Cliente comprobado por el servidor: '+prev.cliente.nombre+' · '+R.refs.length+(R.refs.length===1?' orden':' órdenes')+', todas suyas.'));
+      if((prev.prefijo||[]).length){ fot.classList.add('warn'); fot.append(el('div',null,'Órdenes identificadas solo por el código del inmueble (sin ficha de cliente): '+prev.prefijo.map(r=>'AMJ-'+r).join(', ')+'.')) }
+      const D=prev.dest; if(D){ const dd=el('div','rpmd');
+        if(D.solo_ficticios) dd.textContent='Versión de pruebas: solo se admiten destinatarios ficticios (por ejemplo, nombre@prueba.example).';
+        else if(!D.autorizados.length){ fot.classList.add('warn'); dd.textContent='Este cliente no tiene destinatarios autorizados. Hay que darlos de alta antes de poder enviar.' }
+        else { dd.append(document.createTextNode('Destinatarios autorizados de este cliente: '+D.autorizados.join(', ')+'. ')); const u=el('a','rpmlk','Usar estos'); u.href='#'; u.onclick=ev=>{ ev.preventDefault(); to.value=D.autorizados.join(', '); reinicia() }; dd.append(u) }
+        fot.append(dd) }
+      const dl=el('a','rpmlk','Descargar este PDF'); dl.href=prev.url; dl.download=prev.archivo; fot.append(dl); /* fijo junto a los datos del archivo: los mensajes de estado no lo borran */
       fot.append(el('div','rpmh2','Archivo: '+prev.archivo+' · '+prev.paginas+(prev.paginas===1?' página':' páginas')+' · '+(prev.bytes.length/1048576).toFixed(1).replace('.',',')+' MB · huella '+prev.sha.slice(0,12)+'…')) };
     const reinicia=()=>{ if(bs.dataset.ok==='1'&&!bs.disabled){ bs.dataset.ok=''; bs.textContent='✉ Enviar ahora' } if(incierto){ incierto=false; say('Has cambiado los datos del envío: ya no es un reintento del anterior. Tendrás que confirmarlo de nuevo.') } };
-    bv.onclick=async()=>{ busy(true); say('Generando el PDF… (puede tardar si hay muchas fotos)'); prev=null; pintaFotos(); reinicia();
-      try{ const j=await repCall({...base(),accion:'pdf'}); const bin=atob(j.pdf_b64), u=new Uint8Array(bin.length); for(let i=0;i<bin.length;i++) u[i]=bin.charCodeAt(i);
+    bv.onclick=async()=>{ busy(true); say('Comprobando fotos y materiales…'); prev=null; pintaFotos(); reinicia();
+      try{ let cambian; try{ cambian=await repRefresh(R.ids) }catch(e0){ say('No se han podido releer las fotos y los materiales ('+(e0.message||'error de conexión')+'). No se genera el PDF con datos sin comprobar: vuelve a intentarlo.','err'); return }
+        if(cambian.length){ const refs=cambian.map(id=>'AMJ-'+R.refs[R.ids.indexOf(id)]).join(', '); repSendClose(); repMsg='Las fotos o los materiales de '+refs+' han cambiado desde que abriste el informe. Se ha actualizado: revísalo y vuelve a pulsar «Enviar por email».'; renderSec(); return }
+        say('Generando el PDF… (puede tardar si hay muchas fotos)'); const j=await repCall({...base(),accion:'pdf'}); const bin=atob(j.pdf_b64), u=new Uint8Array(bin.length); for(let i=0;i<bin.length;i++) u[i]=bin.charCodeAt(i);
         const sha=await repSha(u); if(sha!==j.sha256||u.length!==j.bytes) throw new Error('el archivo recibido no coincide con el generado por el servidor; vuelve a intentarlo');
         const url=URL.createObjectURL(new Blob([u],{type:'application/pdf'})); repLibera.push(url);
-        prev={bytes:u,b64:j.pdf_b64,sha,sello:j.sello,caduca:j.caduca,fotos:j.fotos,paginas:j.paginas,archivo:j.archivo||(archivo+'.pdf'),url}; pintaFotos();
+        prev={bytes:u,b64:j.pdf_b64,sha,sello:j.sello,caduca:j.caduca,cliente:j.cliente,prefijo:j.ordenes_por_prefijo,dest:j.destinatarios,fotos:j.fotos,paginas:j.paginas,archivo:j.archivo||(archivo+'.pdf'),url}; pintaFotos();
         say('PDF listo. Es el archivo que se adjuntará: revísalo antes de enviar. ','ok');
-        const dl=el('a','rpmlk','Descargar este PDF'); dl.href=url; dl.download=prev.archivo; st.append(dl);
         const old=card.querySelector('.rpmv'); if(old) old.remove(); const host=el('div','rpmv'); card.append(host); box.classList.add('wide'); host.scrollIntoView({behavior:'smooth',block:'nearest'});
         try{ await repPdfView(u,host) }catch(e2){ host.textContent='No se pudo mostrar aquí el PDF ('+e2.message+'). Usa «Descargar este PDF».' } }
-      catch(e){ say('No se pudo generar el PDF: '+e.message,'err') } finally{ busy(false) } };
+      catch(e){ const J=e.j||{}, L2=(t,a)=>a&&a.length?' '+t+': '+a.map(r=>'AMJ-'+r).join(', ')+'.':'';
+        say('No se pudo generar el PDF: '+e.message+(e.codigo==='CLIENTE_NO_COINCIDE'?L2('De otro cliente',J.ordenes_ajenas)+L2('De prueba',J.ordenes_de_prueba)+L2('Canceladas',J.ordenes_canceladas)+L2('No encontradas',J.ordenes_no_encontradas)+(J.fotos_ajenas?' Fotos que no son de estas órdenes: '+J.fotos_ajenas+'.':''):''),'err') } finally{ busy(false) } };
     bs.onclick=async()=>{ const para=to.value.split(/[,;\s]+/).map(v=>v.trim()).filter(Boolean); if(!para.length||!para.every(v=>/^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(v))){ say('Escribe un correo de destinatario válido.','err'); to.focus(); return }
       if(para.length>5){ say('Demasiados destinatarios ('+para.length+'). El máximo es 5.','err'); return }
       if(!su.value.trim()||!tx.value.trim()){ say('Faltan el asunto o el texto.','err'); return }
       if(!prev){ say('Primero pulsa «Ver el PDF que se enviará» y revísalo: se envía exactamente ese archivo.','err'); return }
+      if(prev.dest){ const A=prev.dest.autorizados.map(v=>v.toLowerCase()), fuera=prev.dest.solo_ficticios?para.filter(v=>!/\.(example|test|invalid)$/i.test(v)):para.filter(v=>!A.includes(v.toLowerCase()));
+        if(fuera.length){ say(prev.dest.solo_ficticios?'Versión de pruebas: solo destinatarios ficticios (nombre@prueba.example). No vale: '+fuera.join(', ')+'.':A.length?'No están autorizados para este cliente: '+fuera.join(', ')+'. Autorizados: '+prev.dest.autorizados.join(', ')+'.':'Este cliente no tiene destinatarios autorizados.','err'); return } }
       if(Date.now()>prev.caduca){ prev=null; pintaFotos(); const v=card.querySelector('.rpmv'); if(v) v.remove(); say('La vista previa ha caducado (30 minutos). Pulsa otra vez «Ver el PDF que se enviará», revísalo y vuelve a enviar.','err'); return }
       if(bs.dataset.ok!=='1'&&!incierto){ bs.dataset.ok='1'; bs.textContent='✉ Confirmar: enviar a '+para.join(', '); say('Pulsa otra vez para confirmar el envío a '+para.join(', ')+(prev.fotos.faltan?'. Atención: en el PDF faltan '+prev.fotos.faltan+' fotos.':'.')); return }
       busy(true); say('Enviando…');
