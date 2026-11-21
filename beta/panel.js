@@ -357,24 +357,23 @@ function nwForm(){
   g.append(el('div','nwh3','Fotos'));
   NW.photos=NW.photos||[]; NW.photos=[];
   const zone=el('div','ph'); zone.tabIndex=0;
-  const zt=el('div',null,'Copia una foto en otra app (WhatsApp, galería, correo…) y pégala con Ctrl + V. Puedes pegar una detrás de otra, hasta 20 fotos. En el móvil usa «Añadir fotos».');
+  const zt=el('div',null,'Lo más rápido: en WhatsApp (u otra app) haz clic derecho en la foto → «Copiar imagen» y pulsa Ctrl + V aquí. Puedes pegar una detrás de otra, hasta 20. Desde una carpeta del ordenador también puedes arrastrarlas. En el móvil usa «Añadir fotos».');
   const fi=el('input'); fi.type='file'; fi.accept='image/*'; fi.multiple=true; fi.hidden=true;
   const pb=el('button','pb','📷 Añadir fotos'); pb.type='button'; pb.onclick=e=>{ e.preventDefault(); fi.click() };
   const pp=el('button','pb','📋 Pegar foto'); pp.type='button'; pp.style.marginLeft='8px';
   const zm=el('div','src'); zm.style.margin='8px 0 0';
   zone.append(zt,pb,pp,zm); g.append(zone,fi);
   const thumbs=el('div','thumbs'); g.append(thumbs);
-  function addFiles(files){ let n=0; [...files].filter(f=>f&&/^image\//.test(f.type)).forEach(f=>{ if(NW.photos.length>=20) return; NW.photos.push({f,url:URL.createObjectURL(f)}); n++ }); drawThumbs();
-    zm.textContent=n?('✔ '+(n===1?'Foto añadida':n+' fotos añadidas')+'. Llevas '+NW.photos.length+' de 20.'+(NW.photos.length<20?' Puedes pegar otra.':' Has llegado al máximo.')):(NW.photos.length>=20?'Has llegado al máximo de 20 fotos.':'Lo que has pegado no es una foto. Copia la imagen (no el texto) y vuelve a pegar.') }
+  function addFiles(files,why){ let n=0; [...files].filter(f=>f&&/^image\//.test(f.type)).forEach(f=>{ if(NW.photos.length>=20) return; NW.photos.push({f,url:URL.createObjectURL(f)}); n++ }); drawThumbs();
+    zm.textContent=n?('✔ '+(n===1?'Foto añadida':n+' fotos añadidas')+'. Llevas '+NW.photos.length+' de 20.'+(NW.photos.length<20?' Puedes pegar otra.':' Has llegado al máximo.')):(NW.photos.length>=20?'Has llegado al máximo de 20 fotos.':(why||'Lo que has pegado no es una foto. Copia la imagen (no el texto) y vuelve a pegar.')) }
   NW.addFiles=addFiles;
   function drawThumbs(){ thumbs.innerHTML=''; NW.photos.forEach((ph,i)=>{ const t=el('div','th'), im=el('img'); im.src=ph.url; const x=el('button',null,'×'); x.type='button'; x.onclick=()=>{ URL.revokeObjectURL(ph.url); NW.photos.splice(i,1); drawThumbs(); zm.textContent='Llevas '+NW.photos.length+' de 20.' }; t.append(im,x); thumbs.append(t) }) }
   fi.onchange=()=>{ addFiles(fi.files); fi.value='' };
   pp.onclick=async e=>{ e.preventDefault();
     try{ const items=await navigator.clipboard.read(), files=[];
       for(const it of items){ const tp=it.types.find(t=>/^image\//.test(t)); if(tp){ const bl=await it.getType(tp); files.push(new File([bl],'foto.'+tp.split('/')[1],{type:tp})) } }
-      addFiles(files) }catch(err){ zm.textContent='El navegador no ha dejado leer el portapapeles. Usa Ctrl + V o «Añadir fotos».' } };
-  zone.ondragover=e=>{ e.preventDefault(); zone.classList.add('drag') }; zone.ondragleave=()=>zone.classList.remove('drag');
-  zone.ondrop=e=>{ e.preventDefault(); zone.classList.remove('drag'); addFiles(e.dataTransfer.files) };
+      addFiles(files,'En el portapapeles no hay ninguna foto. En la foto: clic derecho → «Copiar imagen», y vuelve a pulsar «Pegar foto» o Ctrl + V.') }catch(err){ zm.textContent=err&&err.name==='NotAllowedError'?'Chrome no tiene permiso para leer el portapapeles. Usa Ctrl + V (funciona siempre), o pulsa el candado 🔒 junto a la dirección → «Portapapeles» → Permitir.':'No se ha podido leer el portapapeles. Usa Ctrl + V o «Añadir fotos».' } };
+  NW.zone=zone;
   /* 3. Técnico */
   g.append(el('div','nwh3','3 · Técnico'));
   const ck=el('input'); ck.type='checkbox'; const ckl=el('label','chk'); ckl.append(ck,document.createTextNode(' Asignar ya a un técnico')); g.append(ckl);
@@ -448,6 +447,15 @@ document.addEventListener('paste',e=>{ if($('nw').hidden||!NW.addFiles) return;
   const files=[...(e.clipboardData&&e.clipboardData.items||[])].filter(x=>x.kind==='file').map(x=>x.getAsFile()).filter(Boolean);
   const inText=e.target&&(e.target.tagName==='INPUT'||e.target.tagName==='TEXTAREA');
   if(files.length){ e.preventDefault(); NW.addFiles(files) } else if(!inText){ NW.addFiles([]) } },true);
+/* arrastrar y soltar fotos en cualquier parte de la ventana de nueva orden */
+document.addEventListener('dragover',e=>{ if($('nw').hidden||!NW.zone) return; e.preventDefault(); if(e.dataTransfer) e.dataTransfer.dropEffect='copy'; NW.zone.classList.add('drag') },true);
+document.addEventListener('dragleave',e=>{ if(NW.zone&&!e.relatedTarget) NW.zone.classList.remove('drag') },true);
+document.addEventListener('drop',async e=>{ if($('nw').hidden||!NW.addFiles) return; e.preventDefault(); NW.zone.classList.remove('drag');
+  const dt=e.dataTransfer; let files=[...(dt&&dt.files||[])].filter(f=>/^image\//.test(f.type));
+  if(!files.length&&dt){ const urls=new Set(); (dt.getData('text/uri-list')||'').split(/\r?\n/).forEach(u=>{ if(u&&!u.startsWith('#')) urls.add(u.trim()) });
+    const h=dt.getData('text/html')||''; (h.match(/<img[^>]+src="([^"]+)"/gi)||[]).forEach(m=>urls.add(m.replace(/.*src="([^"]+)".*/i,'$1').replace(/&amp;/g,'&')));
+    for(const u of urls){ try{ const r=await fetch(u); const bl=await r.blob(); if(/^image\//.test(bl.type)) files.push(new File([bl],'foto.'+bl.type.split('/')[1],{type:bl.type})) }catch(err){} } }
+  NW.addFiles(files,'Esa aplicación no deja arrastrar la foto al navegador (WhatsApp lo bloquea). Haz clic derecho en la foto → «Copiar imagen» y pulsa Ctrl + V aquí.') },true);
 $('fab').onclick=nwOpen; $('nwx').onclick=nwClose; $('nw').onclick=e=>{ if(e.target===$('nw')) nwClose() };
 session=loadSession(); if(session) start();
 })();
