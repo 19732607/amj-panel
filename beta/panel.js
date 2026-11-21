@@ -6,7 +6,7 @@
 const SB='https://biwjrbcfupmbpoxnrolt.supabase.co', KEY='sb_publishable_ywkQpKdfMksufdqWkv-fyA_OtcxTXEm';
 const TZ='Europe/Madrid', POLL=15000, PAGE=100, MAXPAGES=200, STORE='amj.panel.session';
 const $=id=>document.getElementById(id);
-let session=null, WARN='', TEST=new Set(), T=null, M=null, P=null, RH=null, payT='', sec='ordenes', kpiDays='all', kpiFrom='', kpiTo='', RV=null, CP=null, repCl='', repDay='', repPer='dia', repSel=new Set(), repView=false, repMsg='', O=[], prevRev={}, view='all', lastOk=0, timer=null, loading=false;
+let session=null, WARN='', TEST=new Set(), T=null, M=null, P=null, RH=null, payT='', sec='ordenes', kpiDays='all', kpiFrom='', kpiTo='', RV=null, CP=null, repCl='', repDay='', repPer='dia', repSel=new Set(), repSelW=new Set(), repView=false, repMsg='', O=[], prevRev={}, view='all', lastOk=0, timer=null, loading=false;
 
 /* ---------- sesión ---------- */
 function storage(){ try{ return localStorage.getItem(STORE)?localStorage:sessionStorage }catch(e){ return null } }
@@ -55,33 +55,62 @@ function repThumb(m){ const a=el('a','rth'); a.href='#'; a.title=m.caption||''; 
   return a }
 function repPhotos(o){ const L=MED[o.id]; const w=el('div','rph'); if(L===undefined){ w.append(el('span','muted','Cargando fotos…')); return w }
   if(!L.length){ w.append(el('span','muted','Sin fotos')); return w } L.forEach(m=>w.append(repThumb(m))); return w }
-/* Informe diario con el formato de los informes que AMJ envía al cliente (vista «Ver») */
-function repDaily(L,day){
-  const fd=(d,o)=>new Date(d+'T12:00:00').toLocaleDateString('es-ES',o), cap1=t=>t?t.charAt(0).toUpperCase()+t.slice(1).toLowerCase():'';
+/* Informes con el formato que AMJ envía al cliente (vista «Ver»). Diario: órdenes marcadas. Semanal: informe completo de la semana de un cliente. */
+function repFmt(L,d0,d1,WK){
+  const fd=(d,o)=>new Date(d+'T12:00:00').toLocaleDateString('es-ES',o), cap1=t=>t?t.charAt(0).toUpperCase()+t.slice(1).toLowerCase():'', dm=d=>fd(d,{day:'2-digit',month:'2-digit'});
   const cls=[...new Set(L.map(o=>o.cl))], one=cls.length===1, cname=cls.map(clName).join(' + '), city=[...new Set(L.map(o=>cap1(o.loc)).filter(Boolean))].join(' / ');
-  const code=o=>(o.piso||o.ad||'—').replace(/^(ENSO|HELP)-/,''), dlong=fd(day,{day:'numeric',month:'long',year:'numeric'});
-  const doc=el('div','repdoc rf');
+  const code=o=>(o.piso||o.ad||'—').replace(/^(ENSO|HELP)-/,''), dlong=fd(d1,{day:'numeric',month:'long',year:'numeric'});
+  const per=WK?'del '+fd(d0,d0.slice(0,7)===d1.slice(0,7)?{day:'numeric'}:{day:'numeric',month:'long'})+' al '+dlong:dlong;
+  const H=t=>el('h2','rf-h2',t), table=(heads,cl)=>{ const tb=el('table','rf-tb'+(cl?' '+cl:'')), hr=el('tr'); heads.forEach(h=>hr.append(el('th',null,h))); const th=el('thead'); th.append(hr); const bd=el('tbody'); tb.append(th,bd); return [tb,bd] };
+  const row=(bd,cells,cl)=>{ const r=el('tr',cl||null); cells.forEach(c=>{ if(c instanceof Node) r.append(c); else r.append(el('td',null,c)) }); bd.append(r); return r };
+  const td=(t,c)=>el('td',c||null,t);
+  const doc=el('div','rf');
   const top=el('div','rf-top'); const lg=document.querySelector('.brand img'); if(lg){ const im=el('img'); im.src=lg.src; im.alt='AMJ'; top.append(im) }
-  const tr=el('div','rf-tr'); tr.append(el('b',null,(cname+(city?' · '+city:'')).toUpperCase()),el('span',null,'Informe diario · '+fd(day,{day:'numeric',month:'short',year:'numeric'}))); top.append(tr); doc.append(top);
-  doc.append(el('h1','rf-h1','Informe diario de servicio'),el('div','rf-sub',[cname,city,dlong].filter(Boolean).join(' · ')));
-  const pisos=new Set(L.map(o=>o.piso||o.ad)).size, loaded=L.every(o=>o.id in MED), nf=L.reduce((a,o)=>a+(MED[o.id]||[]).length,0);
-  const intro=el('p','rf-intro'); intro.append(el('b',null,L.length+(L.length===1?' orden de trabajo finalizada':' órdenes de trabajo finalizadas')+' el '+dlong+'.'),document.createTextNode(' Se detallan las intervenciones por inmueble, el informe del técnico y las fotografías de cada trabajo.')); doc.append(intro);
+  const tr=el('div','rf-tr'); tr.append(el('b',null,(cname+(city?' · '+city:'')).toUpperCase()),el('span',null,WK?'Servicio '+dm(d0)+' – '+dm(d1)+' · '+d1.slice(0,4):'Informe diario · '+fd(d1,{day:'numeric',month:'short',year:'numeric'}))); top.append(tr); doc.append(top);
+  doc.append(el('h1','rf-h1',WK?'Informe de servicio':'Informe diario de servicio'),el('div','rf-sub',[cname,city,per].filter(Boolean).join(' · ')));
+  const pisos=new Set(L.map(o=>o.piso||o.ad)).size, loaded=L.every(o=>o.id in MED), mload=L.every(o=>o.id in MAT), nf=L.reduce((a,o)=>a+(MED[o.id]||[]).length,0);
+  const sumM=(arr,f)=>arr.reduce((a,m)=>a+Number(m[f]||0),0), allM=L.flatMap(o=>MAT[o.id]||[]);
+  const help=one&&cls[0]==='HELP', vkey=o=>(o.piso||o.ad)+'|'+dayOf(o.sa), m0=d1.slice(0,8)+'01';
+  const hv=help?real().filter(o=>o.cl==='HELP'&&o.st!=='cancelled'&&o.sa&&dayOf(o.sa)>=m0&&dayOf(o.sa)<=d1):[], cupo=new Set(hv.map(vkey)).size;
+  const intro=el('p','rf-intro'); intro.append(el('b',null,L.length+(L.length===1?' orden de trabajo finalizada ':' órdenes de trabajo finalizadas ')+(WK?per:'el '+dlong)+'.'),document.createTextNode(' Se detallan las intervenciones por inmueble, el informe del técnico'+(WK?', las fotografías y los materiales declarados por los técnicos.':' y las fotografías de cada trabajo.'))); doc.append(intro);
   const box=el('div','rf-kp'); const k=(v,t)=>{ const d=el('div'); d.append(el('b',null,v),el('span',null,t)); box.append(d) };
   k(String(L.length),L.length===1?'orden finalizada':'órdenes finalizadas');
-  if(one&&cls[0]==='HELP'){ const m0=day.slice(0,8)+'01'; const n=new Set(real().filter(o=>o.cl==='HELP'&&o.st!=='cancelled'&&o.sa&&dayOf(o.sa)>=m0&&dayOf(o.sa)<=day).map(o=>(o.piso||o.ad)+'|'+dayOf(o.sa))).size;
-    k(n+' / 100','avisos consumidos'); k(String(Math.max(100-n,0)),'avisos disponibles al '+fd(day,{day:'2-digit',month:'2-digit'})) }
-  else k(String(pisos),pisos===1?'inmueble atendido':'inmuebles atendidos');
-  k(loaded?String(nf):'…','fotografías'); doc.append(box);
-  if(one){ doc.append(el('h2','rf-h2','Cómo trabajamos cada aviso')); const st=el('div','rf-steps');
-    ['Aviso de '+cname,'Orden en la app con el código del piso','Asignación de técnico y cita','Trabajo en el inmueble','Cierre con informe y fotos','Informe al cliente'].forEach((t,i)=>{ const d=el('div'); d.append(el('b',null,String(i+1)),el('span',null,t)); st.append(d) }); doc.append(st) }
-  doc.append(el('h2','rf-h2','Detalle de las intervenciones'));
-  const tb=el('table','rf-tb'), hr=el('tr'); ['Orden / inmueble','Incidencia y actuación','Estado'].forEach(h=>hr.append(el('th',null,h))); const th=el('thead'); th.append(hr); tb.append(th); const bd=el('tbody');
-  L.forEach(o=>{ const r=el('tr'), c=el('td'); const nov=/SIN POSIBILIDAD DE EJECUCI/i.test(o.report);
+  if(help){ k(cupo+' / 100','avisos consumidos'); k(String(Math.max(100-cupo,0)),'avisos disponibles al '+dm(d1)) } else k(String(pisos),pisos===1?'inmueble atendido':'inmuebles atendidos');
+  if(WK) k(mload?eur2(sumM(allM,'total')):'…','materiales declarados, IVA incluido'); else k(loaded?String(nf):'…','fotografías'); doc.append(box);
+  if(one){ doc.append(H('Cómo trabajamos cada aviso')); const st=el('div','rf-steps');
+    ['Aviso de '+cname,'Orden en la app con el código del piso','Asignación de técnico y cita','Trabajo en el inmueble','Cierre con informe y fotos',help?'Aviso computado e informe al cliente':'Informe al cliente'].forEach((t,i)=>{ const d=el('div'); d.append(el('b',null,String(i+1)),el('span',null,t)); st.append(d) }); doc.append(st) }
+  if(WK&&L.length){ /* órdenes por inmueble y tipo de trabajo */
+    doc.append(H('Órdenes por inmueble · '+per)); const cnt={}; L.forEach(o=>{ const c=code(o); cnt[c]=(cnt[c]||0)+1 }); const mx=Math.max(...Object.values(cnt)); const bars=el('div','rf-bars');
+    Object.keys(cnt).sort().forEach(c=>{ const r=el('div'), bar=el('i'), f=el('u'); f.style.width=Math.round(cnt[c]/mx*100)+'%'; bar.append(f); r.append(el('span',null,c),bar,el('em',null,String(cnt[c]))); bars.append(r) }); doc.append(bars);
+    doc.append(H('Tipo de trabajo')); const [t1,b1]=table(['Tipo de trabajo','Registros','Órdenes']); const sv={}; L.forEach(o=>{ const s=o.sv||'Sin clasificar'; (sv[s]=sv[s]||[]).push('AMJ-'+o.ref) });
+    Object.keys(sv).sort((x,y)=>sv[y].length-sv[x].length||x.localeCompare(y)).forEach(s=>row(b1,[s,String(sv[s].length),sv[s].join(', ')])); doc.append(t1) }
+  if(WK&&help){ /* cupo */
+    doc.append(H('Visitas y saldo del cupo de '+fd(d1,{month:'long'}))); const prev=new Set(hv.filter(o=>dayOf(o.sa)<d0).map(vkey)).size;
+    const p=el('p','rf-intro','Al cierre del '+dm(d1)+': '+cupo+' avisos consumidos de 100 y '+Math.max(100-cupo,0)+' disponibles. Cupo: 1 inmueble + día de inicio = 1 aviso.'); doc.append(p);
+    const [t2,b2]=table(['Fecha','Órdenes / visitas','Avisos consumidos']); const byD={}; hv.filter(o=>dayOf(o.sa)>=d0).forEach(o=>{ const d=dayOf(o.sa); (byD[d]=byD[d]||[]).push(o) });
+    Object.keys(byD).sort().forEach(d=>row(b2,[dm(d),byD[d].sort((x,y)=>x.ref-y.ref).map(o=>'AMJ-'+o.ref).join(', '),String(new Set(byD[d].map(vkey)).size)]));
+    if(d0>m0) row(b2,['Hasta '+dm(new Date(new Date(d0+'T12:00:00')-864e5).toLocaleDateString('sv-SE')),'Saldo anterior del mes',String(prev)]);
+    row(b2,['Total','Cupo mensual: 100. Saldo disponible al '+dm(d1)+': '+Math.max(100-cupo,0),String(cupo)],'tot'); doc.append(t2) }
+  doc.append(H(WK?'Detalle de las incidencias':'Detalle de las intervenciones'));
+  const [tb,bd]=table((WK?['Fecha']:[]).concat(['Orden / inmueble','Incidencia y actuación','Estado']),'det');
+  L.forEach(o=>{ const c=el('td'); const nov=/SIN POSIBILIDAD DE EJECUCI/i.test(o.report);
     c.append(el('b',null,(o.work||'(sin descripción)').replace(/\.?$/,'. ')),document.createTextNode(o.report||'El técnico no escribió informe.')); c.style.whiteSpace='pre-wrap';
-    r.append(el('td','nwr','AMJ-'+o.ref+' · '+code(o)+(one?'':' · '+clName(o.cl))),c,el('td',null,nov?'Visita realizada sin posibilidad de ejecución':'Finalizada')); bd.append(r) });
-  tb.append(bd); doc.append(tb);
-  doc.append(el('h2','rf-h2','Fotos de las intervenciones'));
-  L.forEach(o=>{ const g=el('div','rf-og'); g.append(el('div','rf-oh','AMJ-'+o.ref+' · '+(o.work||'').replace(/\.$/,'')+' · '+code(o))); const w=repPhotos(o); w.className='rf-ph'; g.append(w); doc.append(g) });
+    row(bd,(WK?[td(dm(dayOf(o.fa)),'nwr')]:[]).concat([td('AMJ-'+o.ref+' · '+code(o)+(one?'':' · '+clName(o.cl)),'nwr'),c,td(nov?'Visita realizada sin posibilidad de ejecución':'Finalizada')])) });
+  if(!L.length){ const e=td('No hay órdenes finalizadas en el periodo.'); e.colSpan=WK?4:3; row(bd,[e]) }
+  doc.append(tb);
+  if(L.length) doc.append(H('Fotos de las intervenciones'));
+  L.forEach(o=>{ const g=el('div','rf-og'); g.append(el('div','rf-oh',(WK?dm(dayOf(o.fa))+' · ':'')+'AMJ-'+o.ref+' · '+(o.work||'').replace(/\.$/,'')+' · '+code(o))); const w=repPhotos(o); w.className='rf-ph'; g.append(w); doc.append(g) });
+  if(WK){ /* materiales */
+    doc.append(H('Relación detallada de materiales'),el('p','rf-intro','Cada línea corresponde a un material declarado por el técnico en la orden. Importes al precio de compra, sin recargo.'));
+    const [t3,b3]=table(['Fecha','Orden / inmueble','Trabajo y material','Base','IVA','Total'],'mat'); const withM=L.filter(o=>(MAT[o.id]||[]).length);
+    if(!mload){ const e=td('Cargando materiales…'); e.colSpan=6; row(b3,[e]) } else if(!withM.length){ const e=td('Esta semana no se han declarado materiales.'); e.colSpan=6; row(b3,[e]) }
+    withM.forEach(o=>{ const M=MAT[o.id]; M.forEach((m,i)=>{ const c=el('td'); if(!i) c.append(el('b',null,(o.work||'').replace(/\.$/,'')),el('br')); c.append(document.createTextNode((m.description||'—')+(Number(m.quantity||1)!==1?' × '+Number(m.quantity):'')));
+        row(b3,[td(i?'':dm(dayOf(o.fa)),'nwr'),td(i?'':'AMJ-'+o.ref+' · '+code(o),'nwr'),c,td(eur2(m.subtotal),'r'),td(eur2(m.iva),'r'),td(eur2(m.total),'r')]) });
+      if(M.length>1) row(b3,['','','Subtotal AMJ-'+o.ref,td(eur2(sumM(M,'subtotal')),'r'),td(eur2(sumM(M,'iva')),'r'),td(eur2(sumM(M,'total')),'r')],'sub') });
+    if(mload&&withM.length) row(b3,['','','Total de la semana',td(eur2(sumM(allM,'subtotal')),'r'),td(eur2(sumM(allM,'iva')),'r'),td(eur2(sumM(allM,'total')),'r')],'tot');
+    doc.append(t3);
+    const open=real().filter(o=>!['completed','cancelled'].includes(o.st)&&cls.includes(o.cl)&&dayOf(o.ca)<=d1);
+    if(open.length){ doc.append(H('Órdenes abiertas al cierre de la semana')); const [t4,b4]=table(['Orden / inmueble','Trabajo','Estado']); open.forEach(o=>row(b4,[td('AMJ-'+o.ref+' · '+code(o),'nwr'),o.work,(STATUS[o.st]||[o.st])[0]])); doc.append(t4) } }
   const ft=el('div','rf-ft'); ft.append(el('span',null,'amjmaintenance.es · Informe para '+cname),el('span',null,'ASSET MAINTENANCE · JUST IN TIME')); doc.append(ft);
   return doc }
 const eur2=v=>Number(v||0).toLocaleString('es-ES',{minimumFractionDigits:2,maximumFractionDigits:2})+' €';
@@ -332,7 +361,7 @@ const SECS={
    const st=WK?7:1, prev=el('button','out',WK?'◀ Semana anterior':'◀ Día anterior'), next=el('button','out',WK?'Semana siguiente ▶':'Día siguiente ▶'); prev.onclick=()=>mv(-st); next.onclick=()=>mv(st); prev.style.marginLeft=next.style.marginLeft='0';
    const pr=el('button','out','🖨 Imprimir / PDF'); pr.onclick=()=>window.print();
    const bVer=el('button','out'), bEnv=el('button','out'), bBack=el('button','out','◀ Volver a seleccionar'); bVer.style.marginLeft=bEnv.style.marginLeft=bBack.style.marginLeft='0';
-   const updSel=()=>{ const n=LA.filter(o=>repSel.has(o.id)).length; bVer.textContent='👁 Ver ('+n+')'; bEnv.textContent='✉ Enviar por email ('+n+')'; bVer.disabled=bEnv.disabled=!n };
+   let selN=()=>0; const updSel=()=>{ const n=selN(); bVer.textContent='👁 Ver ('+n+')'; bEnv.textContent='✉ Enviar por email ('+n+')'; bVer.disabled=bEnv.disabled=!n };
    bVer.onclick=()=>{ repView=true; repMsg=''; renderSec() }; bBack.onclick=()=>{ repView=false; repMsg=''; renderSec() };
    bEnv.onclick=()=>{ repMsg='Envío por email todavía sin conectar: falta tu OK para crear la función de envío en el servidor.'; renderSec() };
    const row=el('div','repbar'); if(repView) row.append(bBack,bEnv,pr); else row.append(scl,prev,dIn,next,bVer,bEnv); ctl.append(seg,row); if(repMsg) ctl.append(el('div','repmsg',repMsg));
@@ -341,9 +370,21 @@ const SECS={
    const fd=(d,o)=>new Date(d+'T12:00:00').toLocaleDateString('es-ES',o);
    const per=WK?('Semana del '+fd(d0,{day:'numeric',month:'long'})+' al '+fd(d1,{day:'numeric',month:'long',year:'numeric'})):(()=>{ const f=fd(repDay,{weekday:'long',day:'numeric',month:'long',year:'numeric'}); return f.charAt(0).toUpperCase()+f.slice(1) })();
    const LA=real().filter(o=>o.st==='completed'&&dayOf(o.fa)>=d0&&dayOf(o.fa)<=d1&&(!repCl||o.cl===repCl)).sort((x,y)=>new Date(x.fa)-new Date(y.fa)||x.ref-y.ref);
-   if(repView&&!LA.some(o=>repSel.has(o.id))) repView=false;
+   const wcl=[...new Set(LA.map(o=>o.cl))].sort((x,y)=>clName(x).localeCompare(clName(y)));
+   selN=()=>WK?wcl.filter(c=>repSelW.has(c)).length:LA.filter(o=>repSel.has(o.id)).length;
+   if(repView&&!selN()) repView=false;
    const L=repView?LA.filter(o=>repSel.has(o.id)):LA, SEL=!repView; updSel();
-   if(repView&&!WK){ repEnsure(L.map(o=>o.id)); const cs=new Set(L.map(o=>o.cl)); const out=[ctl]; if(cs.size>1) out.push(el('div','repmsg','Has marcado órdenes de '+cs.size+' clientes distintos: para enviar, marca solo las de un cliente.')); out.push(src('Así lo verá el cliente: solo las órdenes que has marcado.'),repDaily(L,repDay)); return out }
+   const wrap=docs=>{ const w=el('div','repdoc rfw'); docs.forEach(d=>w.append(d)); return w };
+   if(WK){ repEnsure(LA.map(o=>o.id));
+     if(repView) return [ctl,src('Así lo verá el cliente: el informe completo de la semana.'),wrap(wcl.filter(c=>repSelW.has(c)).map(c=>repFmt(LA.filter(o=>o.cl===c),d0,d1,true)))];
+     const card=el('div','repdoc'); card.append(el('h3','reph3','Informe semanal · '+per));
+     const tb=el('table','reptb sel wk'), hr=el('tr'); ['','Cliente','Órdenes finalizadas','Inmuebles','Materiales con IVA'].forEach((h,i)=>hr.append(el('th',i?null:'ck',h))); const th=el('thead'); th.append(hr); const bd=el('tbody');
+     if(!wcl.length){ const r=el('tr'), e=el('td','empty','No hay órdenes terminadas esta semana.'); e.colSpan=5; r.append(e); bd.append(r) }
+     wcl.forEach(c=>{ const G=LA.filter(o=>o.cl===c), r=el('tr'), k=el('td','ck'), ck=el('input'); ck.type='checkbox'; ck.checked=repSelW.has(c); ck.onchange=()=>{ ck.checked?repSelW.add(c):repSelW.delete(c); updSel() }; k.append(ck);
+       r.append(k,el('td','b',clName(c)),el('td',null,String(G.length)),el('td',null,String(new Set(G.map(o=>o.piso||o.ad)).size)),el('td',null,G.every(o=>o.id in MAT)?eur2(G.reduce((a,o)=>a+MAT[o.id].reduce((x,m)=>x+Number(m.total||0),0),0)):'…')); bd.append(r) });
+     tb.append(th,bd); card.append(tb);
+     return [ctl,src('Informe semanal completo de cada cliente, con todos los trabajos de la semana. Marca la casilla del cliente y pulsa «Ver» para verlo como lo recibirá, o «Enviar por email».'),card] }
+   if(repView){ repEnsure(L.map(o=>o.id)); const cs=new Set(L.map(o=>o.cl)); const out=[ctl]; if(cs.size>1) out.push(el('div','repmsg','Has marcado órdenes de '+cs.size+' clientes distintos: para enviar, marca solo las de un cliente.')); out.push(src('Así lo verá el cliente: solo las órdenes que has marcado.'),wrap([repFmt(L,repDay,repDay,false)])); return out }
    repEnsure(L.map(o=>o.id));
    const doc=el('div','repdoc'); const hd=el('div','rephd'); const lg=document.querySelector('.brand img'); if(lg){ const im=el('img'); im.src=lg.src; im.alt='AMJ'; hd.append(im) }
    const tt=el('div'); tt.append(el('h2',null,(WK?'Informe semanal':'Informe diario')+(repCl?' · '+clName(repCl):'')),el('div','repsub',per+' · '+L.length+(L.length===1?' orden terminada':' órdenes terminadas')+(SEL?' · marca las que quieres ver y enviar':''))); hd.append(tt); doc.append(hd);
