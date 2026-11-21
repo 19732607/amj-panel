@@ -35,6 +35,11 @@ async function authHdr(){ if(!session) throw new Error('NO_SESSION'); if(Date.no
 async function rest(path){ let r=await fetch(SB+'/rest/v1/'+path,{headers:await authHdr()}); if(r.status===401){ await refresh(); r=await fetch(SB+'/rest/v1/'+path,{headers:await authHdr()}) } if(!r.ok) throw new Error('HTTP '+r.status); return r.json() }
 /* fotos y materiales por orden (solo lectura, para los informes) */
 const MED={}, MAT={}, THU={}; let repFetching=false;
+/* Bloque 3 · histórico de estados (fecha de cancelación) desde la función amj_admin_informe_ordenes. CTX=undefined: sin pedir; null: el servidor no la tiene; objeto: por id de orden. */
+let CTX, ctxP=null;
+function repCtx(){ if(CTX!==undefined||ctxP) return; ctxP=rpc('amj_admin_informe_ordenes',{}).then(a=>{ CTX={}; (a||[]).forEach(x=>CTX[x.id]=x) }).catch(()=>{ CTX=null }).finally(()=>{ ctxP=null; if(sec==='informes') renderSec() }) }
+/* Misma definición que el servidor (vista v_kpi_ordenes): la orden se cerró sin poder ejecutar el trabajo. */
+const sinEjec=o=>/^\s*VISITA REALIZADA SIN POSIBILIDAD/i.test(o.report||'')||/no eh podido|no he podido|no fue posible|no se pudo|no ha sido posible/i.test(o.report||'');
 /* Antes de generar un PDF se vuelven a leer fotos y materiales. Devuelve las órdenes cuyo contenido ha cambiado; lanza error si la lectura falla o queda incompleta. */
 async function repRefresh(ids){ const nM={}, nT={}; ids.forEach(id=>{ nM[id]=[]; nT[id]=[] });
   for(let i=0;i<ids.length;i+=40){ const ch=ids.slice(i,i+40), inl='('+ch.join(',')+')';
@@ -68,9 +73,9 @@ function repPhotos(o){ const L=MED[o.id]; const w=el('div','rph'); if(L===undefi
    Fuente: Airtable «Periodos contractuales» (base de producción), contrastada el 21/11/2026. Fuera de estos periodos no se computa cupo. */
 const HELP_PERIODOS=[['2026-10-19','2026-10-31',42],['2026-11-01','2026-11-30',100],['2026-12-01','2026-12-17',55]];
 /* Informes con el formato que AMJ envía al cliente (vista «Ver»). Diario: órdenes marcadas. Semanal: informe completo de la semana de un cliente. */
-function repFmt(L,d0,d1,WK,QN,MS){ const addD0=(d,n)=>{ const x=new Date(d+'T12:00:00'); x.setDate(x.getDate()+n); return x.toLocaleDateString('sv-SE') }; const PW=MS?'mes':QN?'quincena':'semana', DELA=MS?'del mes':'de la '+PW;
+function repFmt(L,d0,d1,WK,QN,MS,CL){ const addD0=(d,n)=>{ const x=new Date(d+'T12:00:00'); x.setDate(x.getDate()+n); return x.toLocaleDateString('sv-SE') }; const PW=MS?'mes':QN?'quincena':'semana', DELA=MS?'del mes':'de la '+PW;
   const fd=(d,o)=>new Date(d+'T12:00:00').toLocaleDateString('es-ES',o), cap1=t=>t?t.charAt(0).toUpperCase()+t.slice(1).toLowerCase():'', dm=d=>d.slice(8,10)+'/'+d.slice(5,7);
-  const cls=[...new Set(L.map(o=>o.cl))], one=cls.length===1, cname=cls.map(clName).join(' + '), city=[...new Set(L.map(o=>cap1(o.loc)).filter(Boolean))].join(' / ');
+  const cls=CL?[CL]:[...new Set(L.map(o=>o.cl))], one=cls.length===1, cname=cls.map(clName).join(' + '), city=[...new Set(L.map(o=>cap1(o.loc)).filter(Boolean))].join(' / ');
   const code=o=>(o.piso||o.ad||'—').replace(/^(ENSO|HELP)-/,''), dlong=fd(d1,{day:'numeric',month:'long',year:'numeric'});
   const per=MS?fd(d1,{month:'long',year:'numeric'}):(QN?(d0.slice(8)==='01'?'1.ª':'2.ª')+' quincena de '+fd(d1,{month:'long'})+' · ':'')+(!WK?dlong:'del '+fd(d0,d0.slice(0,7)===d1.slice(0,7)?{day:'numeric'}:{day:'numeric',month:'long'})+' al '+dlong);
   const dc=d1>todayStr()?todayStr():d1, live=WK&&dc<d1;
@@ -97,27 +102,30 @@ function repFmt(L,d0,d1,WK,QN,MS){ const addD0=(d,n)=>{ const x=new Date(d+'T12:
   if(one){ doc.append(H('Cómo trabajamos cada aviso')); const st=el('div','rf-steps');
     ['Aviso de '+cname,'Orden en la app con el código del piso','Asignación de técnico y cita','Trabajo en el inmueble','Cierre con informe y fotos',help?'Aviso computado e informe al cliente':'Informe al cliente'].forEach((t,i)=>{ const d=el('div'); d.append(el('b',null,String(i+1)),el('span',null,t)); st.append(d) }); doc.append(st) }
   if(MS){ /* KPI del mes */
-    const inP=s=>s&&dayOf(s)>=d0&&dayOf(s)<=dc, mine=real().filter(o=>cls.includes(o.cl)&&o.st!=='cancelled'), rec=mine.filter(o=>inP(o.ca)), /* las canceladas son gestión interna de AMJ: no entran en el informe del cliente */ opn=mine.filter(o=>dayOf(o.ca)<=dc&&(o.st!=='completed'||(o.fa&&dayOf(o.fa)>dc)));
+    const inP=s=>s&&dayOf(s)>=d0&&dayOf(s)<=dc, mine=real().filter(o=>cls.includes(o.cl)&&o.st!=='cancelled'), rec=mine.filter(o=>inP(o.ca)); /* las canceladas son gestión interna de AMJ: no entran en el informe del cliente */
+    /* Abiertas en la fecha de corte. Una orden cancelada DESPUÉS del corte estaba abierta ese día: solo se sabe con el histórico del servidor. */
+    const hist=!!CTX, cerrado=dc<todayStr(), canD=o=>CTX&&CTX[o.id]&&CTX[o.id].cancelada_at?dayOf(CTX[o.id].cancelada_at):'';
+    const opn=real().filter(o=>cls.includes(o.cl)&&dayOf(o.ca)<=dc&&(o.st==='cancelled'?(hist&&canD(o)>dc):(o.st!=='completed'||(o.fa&&dayOf(o.fa)>dc))));
     const hrs=(a,b)=>(new Date(b)-new Date(a))/36e5, avg=a=>a.length?a.reduce((x,y)=>x+y,0)/a.length:null, fH=h=>h===null?'—':(h<24?h.toFixed(1).replace('.',',')+' h':(h/24).toFixed(1).replace('.',',')+' días');
     const tA=avg(L.filter(o=>o.sa).map(o=>hrs(o.ca,o.sa))), tR=avg(L.map(o=>hrs(o.ca,o.fa))), tW=avg(L.filter(o=>o.min!=null).map(o=>o.min));
-    const d24=L.filter(o=>hrs(o.ca,o.fa)<=24).length, d48=L.filter(o=>hrs(o.ca,o.fa)<=48).length, pct=(a,b)=>b?Math.round(a/b*100)+' %':'—';
-    const nov=L.filter(o=>/SIN POSIBILIDAD DE EJECUCI/i.test(o.report)).length, byP={}; L.forEach(o=>{ const c=code(o); byP[c]=(byP[c]||0)+1 }); const rep2=Object.values(byP).filter(n=>n>1).length;
+    const d24=L.filter(o=>hrs(o.ca,o.fa)<24).length, d48=L.filter(o=>hrs(o.ca,o.fa)<48).length, /* «menos de»: el límite exacto no entra */ pct=(a,b)=>b?Math.round(a/b*100)+' %':'—';
+    const nov=L.filter(sinEjec).length, vis={}; L.forEach(o=>{ (vis[vkey(o)]=vis[vkey(o)]||[]).push(o) }); const visSin=Object.values(vis).filter(a=>a.every(sinEjec)).length, byP={}; L.forEach(o=>{ const c=code(o); byP[c]=(byP[c]||0)+1 }); const rep2=Object.values(byP).filter(n=>n>1).length;
     /* Regla de Antonio (21/11/2026): las valoraciones quedan fuera de cualquier informe a clientes. */
     doc.append(H('Indicadores del mes (KPI)')); const g=el('div','rf-kp rf-kpi'); const kk=(v,t)=>{ const d=el('div'); d.append(el('b',null,String(v)),el('span',null,t)); g.append(d) };
-    kk(rec.length,'órdenes recibidas'); kk(L.length,'órdenes finalizadas'); kk(opn.length,live?'abiertas a fecha de '+dm(dc):'abiertas al cierre del mes');
-    kk(fH(tA),'tiempo medio de respuesta (del aviso al inicio del trabajo)'); kk(fH(tR),'tiempo medio de resolución (del aviso al cierre)'); kk(pct(d24,L.length),'resueltas en menos de 24 h'); kk(pct(d48,L.length),'resueltas en menos de 48 h');
-    kk(tW===null?'—':dur(Math.round(tW)),'tiempo medio de trabajo en el inmueble'); kk(pisos,'inmuebles atendidos'); kk(rep2,'inmuebles con más de una orden'); kk(nov,'visitas sin posibilidad de ejecución');
+    kk(rec.length,'órdenes recibidas'); kk(L.length,'órdenes finalizadas'); kk(opn.length,(live?'abiertas a fecha de '+dm(dc):'abiertas al cierre del mes')+(cerrado&&!hist?' (según el estado de hoy)':''));
+    kk(fH(tA),'tiempo medio hasta el inicio del trabajo (desde el alta de la orden)'); kk(fH(tR),'tiempo medio hasta el cierre (desde el alta de la orden)'); kk(pct(d24,L.length),'cerradas en menos de 24 h desde el alta'); kk(pct(d48,L.length),'cerradas en menos de 48 h desde el alta');
+    kk(tW===null?'—':dur(Math.round(tW)),'tiempo medio registrado por el técnico en el inmueble'); kk(pisos,'inmuebles atendidos'); kk(rep2,'inmuebles con más de una orden'); kk(nov,'órdenes sin posibilidad de ejecución'); kk(visSin,'visitas en las que no se pudo hacer ningún trabajo');
     kk(pct(L.filter(o=>(MED[o.id]||[]).length).length,L.length),'órdenes con fotografías'); kk(pct(L.filter(o=>o.report).length,L.length),'órdenes con informe del técnico'); kk(mload?eur2(sumM(allM,'total')):'…','materiales, IVA incluido');
     const offH=rec.filter(o=>{ const d=new Date(o.ca), h=Number(d.toLocaleString('en-GB',{timeZone:TZ,hour:'2-digit',hour12:false})), wd=d.toLocaleDateString('en-GB',{timeZone:TZ,weekday:'short'}); return h<8||h>=20||wd==='Sat'||wd==='Sun' }).length, mins=L.reduce((a,o)=>a+(o.min||0),0);
-    kk(offH,'avisos creados fuera de horario (antes de 8, después de 20 o fin de semana)'); kk((()=>{ const g={}; L.forEach(o=>{ const k=code(o)+'|'+dayOf(o.sa||o.fa); g[k]=(g[k]||0)+1 }); return Object.values(g).filter(n=>n>1).length })(),'visitas con varias órdenes en el mismo inmueble'); kk(L.filter(o=>(o.min||0)>120).length,'órdenes con más de 2 h de trabajo'); kk(mins?dur(mins):'—','horas de trabajo en los inmuebles');
-    doc.append(g,el('p','rf-note','Tiempos calculados sobre las órdenes finalizadas en el mes, desde la creación de la orden en la app.'));
+    kk(offH,'órdenes dadas de alta en la app fuera de horario (antes de 8, después de 20 o fin de semana)'); kk((()=>{ const g={}; L.forEach(o=>{ const k=code(o)+'|'+dayOf(o.sa||o.fa); g[k]=(g[k]||0)+1 }); return Object.values(g).filter(n=>n>1).length })(),'visitas con varias órdenes en el mismo inmueble'); kk(L.filter(o=>(o.min||0)>120).length,'órdenes con más de 2 h registradas'); kk(mins?dur(mins):'—','tiempo total registrado por los técnicos');
+    doc.append(g,el('p','rf-note','Tiempos calculados sobre las órdenes finalizadas en el mes. Se cuentan desde el alta de la orden en la app, que no siempre coincide con la hora en que el cliente dio el aviso. El tiempo en el inmueble es el que registra el técnico entre el inicio y el cierre de la orden.'+(cerrado&&!hist?' Las órdenes abiertas se calculan con el estado de hoy: no se dispone del histórico de estados en la fecha de cierre.':'')));
     /* gráficos, como en el panel KPI */
     const days={}; days[d0]={c:0,a:0,r:0,x:0}; days[dc]=days[dc]||{c:0,a:0,r:0,x:0}; const add=(s,k)=>{ if(inP(s)) (days[dayOf(s)]=days[dayOf(s)]||{c:0,a:0,r:0,x:0})[k]++ };
     mine.forEach(o=>{ add(o.ca,'c'); add(o.sa,'a'); if(o.st==='completed') add(o.fa,'r') });
     const lc=lineChart('Flujo de órdenes del mes',days,[['c','Recibidas','#13385f'],['a','Atendidas (empezadas)','#1b8fd9'],['r','Resueltas','#16a36a']]); lc.classList.add('rf-ch'); doc.append(lc);
     { const SER=[['c','Recibidas','#13385f'],['a','Atendidas (empezadas)','#1b8fd9'],['r','Resueltas','#16a36a']], ks=[]; for(let a=d0;a<=dc;a=addD0(a,1)) ks.push(a); lc._m={t:'line',title:'Flujo de órdenes del mes',labels:ks.map(k=>fd(k,{day:'2-digit',month:'short'})),series:SER.map(([k,n,c])=>({n,c,v:ks.map(d=>(days[d]||{})[k]||0)}))} }
     const cnt=(list,key)=>{ const m={}; list.forEach(o=>{ const k=key(o)||'—'; m[k]=(m[k]||0)+1 }); return Object.entries(m).sort((a,b)=>b[1]-a[1]) };
-    const DN=[['Por tipo de trabajo',cnt(rec,o=>o.sv)],['Por estado',cnt(rec,o=>(STATUS[o.st]||[o.st])[0])],['Por ciudad',cnt(rec,o=>cap1(o.loc))]]; const dg=el('div','rf-dn'); DN.forEach(([t,e])=>dg.append(donut(t,e))); dg._m={t:'donuts',items:DN.map(([title,entries])=>({title,entries}))}; doc.append(dg);
+    const DN=[['Por tipo de trabajo',cnt(rec,o=>o.sv)],['Por estado a fecha de hoy',cnt(rec,o=>(STATUS[o.st]||[o.st])[0])],['Por ciudad',cnt(rec,o=>cap1(o.loc))]]; const dg=el('div','rf-dn'); DN.forEach(([t,e])=>dg.append(donut(t,e))); dg._m={t:'donuts',items:DN.map(([title,entries])=>({title,entries}))}; doc.append(dg);
     /* evolución por semana */
     doc.append(H('Evolución por semana')); const [tw,bw]=table(['Semana','Recibidas','Finalizadas','Inmuebles','Materiales']); const addD=(d,n)=>{ const x=new Date(d+'T12:00:00'); x.setDate(x.getDate()+n); return x.toLocaleDateString('sv-SE') };
     for(let a=d0;a<=dc;){ const wd=(new Date(a+'T12:00:00').getDay()+6)%7; let b=addD(a,6-wd); if(b>dc) b=dc; const F=L.filter(o=>dayOf(o.fa)>=a&&dayOf(o.fa)<=b);
@@ -143,9 +151,9 @@ function repFmt(L,d0,d1,WK,QN,MS){ const addD0=(d,n)=>{ const x=new Date(d+'T12:
       row(b2,['Total','Cupo del periodo: '+P.tot+'. Saldo disponible al '+dm(P.upto)+': '+disp,String(P.n)],'tot'); doc.append(t2) }) }
   doc.append(H(WK?'Detalle de las incidencias':'Detalle de las intervenciones'));
   const [tb,bd]=table((WK?['Fecha']:[]).concat(['Orden / inmueble','Incidencia y actuación','Estado']),'det');
-  L.forEach(o=>{ const c=el('td'); const nov=/SIN POSIBILIDAD DE EJECUCI/i.test(o.report);
+  L.forEach(o=>{ const c=el('td'); const nov=sinEjec(o);
     c.append(el('b',null,(o.work||'(sin descripción)').replace(/\.?$/,'. ')),document.createTextNode(o.report||'El técnico no escribió informe.')); c.style.whiteSpace='pre-wrap';
-    row(bd,(WK?[td(dm(dayOf(o.fa)),'nwr')]:[]).concat([td('AMJ-'+o.ref+' · '+code(o)+(one?'':' · '+clName(o.cl)),'nwr'),c,td(nov?'Visita realizada sin posibilidad de ejecución':'Finalizada')])) });
+    row(bd,(WK?[td(dm(dayOf(o.fa)),'nwr')]:[]).concat([td('AMJ-'+o.ref+' · '+code(o)+(one?'':' · '+clName(o.cl)),'nwr'),c,td(nov?'Sin posibilidad de ejecución':'Finalizada')])) });
   if(!L.length){ const e=td('No hay órdenes finalizadas en el periodo.'); e.colSpan=WK?4:3; row(bd,[e]) }
   doc.append(tb);
   if(L.length) doc.append(H('Fotos de las intervenciones'));
@@ -169,10 +177,11 @@ function repFmt(L,d0,d1,WK,QN,MS){ const addD0=(d,n)=>{ const x=new Date(d+'T12:
       if(M.length>1) row(b3,['','','Subtotal AMJ-'+o.ref,td(eur2(sumM(M,'subtotal')),'r'),td(eur2(sumM(M,'iva')),'r'),td(eur2(sumM(M,'total')),'r')],'sub') });
     if(mload&&withM.length) row(b3,['','','Total '+DELA,td(eur2(sumM(allM,'subtotal')),'r'),td(eur2(sumM(allM,'iva')),'r'),td(eur2(sumM(allM,'total')),'r')],'tot');
     doc.append(t3);
-    const open=real().filter(o=>cls.includes(o.cl)&&o.st!=='cancelled'&&dayOf(o.ca)<=dc&&(o.st!=='completed'||(o.fa&&dayOf(o.fa)>dc)));
-    if(open.length){ doc.append(H(live?'Órdenes abiertas a fecha de '+dm(dc):'Órdenes abiertas al cierre '+DELA)); const [t4,b4]=table(['Orden / inmueble','Trabajo','Estado']); open.forEach(o=>row(b4,[td('AMJ-'+o.ref+' · '+code(o),'nwr'),o.work,o.st==='completed'?'Terminada después, el '+dm(dayOf(o.fa)):(STATUS[o.st]||[o.st])[0]])); doc.append(t4) } }
+    const canD2=o=>CTX&&CTX[o.id]&&CTX[o.id].cancelada_at?dayOf(CTX[o.id].cancelada_at):'';
+    const open=real().filter(o=>cls.includes(o.cl)&&dayOf(o.ca)<=dc&&(o.st==='cancelled'?canD2(o)>dc:(o.st!=='completed'||(o.fa&&dayOf(o.fa)>dc)))); /* mismo criterio que el KPI «abiertas» */
+    if(open.length){ doc.append(H(live?'Órdenes abiertas a fecha de '+dm(dc):'Órdenes abiertas al cierre '+DELA)); const [t4,b4]=table(['Orden / inmueble','Trabajo','Estado']); open.forEach(o=>row(b4,[td('AMJ-'+o.ref+' · '+code(o),'nwr'),o.work,o.st==='completed'?'Terminada después, el '+dm(dayOf(o.fa)):o.st==='cancelled'?'Abierta en esa fecha':(STATUS[o.st]||[o.st])[0]])); doc.append(t4) } }
   const ft=el('div','rf-ft'); ft.append(el('span',null,'amjmaintenance.es · Informe para '+cname),el('span',null,'ASSET MAINTENANCE · JUST IN TIME')); doc.append(ft);
-  doc._rep={cl:cls.join('+'),cname,one,tipo:MS?'mensual':QN?'quincenal':WK?'semanal':'diario',d0,d1,per:MS?per:WK?per.replace(/^.* · /,''):dlong,ids:L.map(o=>o.id),refs:L.map(o=>o.ref),mat:WK};
+  doc._rep={cl:cls.join('+'),cname,one,tipo:MS?'mensual':QN?'quincenal':WK?'semanal':'diario',d0,d1,per:MS?per:WK?per.replace(/^.* · /,''):dlong,ids:L.map(o=>o.id),refs:L.map(o=>o.ref),mat:WK,dc};
   return doc }
 /* ---------- envío de informes por email (función amj-informes-enviar: PDF adjunto) ---------- */
 const REP_COPIA='antonio@amjmaintenance.es';
@@ -222,7 +231,7 @@ function repSendOpen(){
     const tx=fld('Texto del correo',el('textarea')); tx.rows=9; tx.value='Buenas tardes,\n\nAdjuntamos el informe '+R.tipo+' de servicio de '+R.cname+' '+perTxt+'.\n\nEn el PDF encontrará el detalle de las intervenciones por inmueble, con el informe del técnico y las fotografías de cada trabajo'+(R.mat?', y la relación de materiales':'')+'.\n\nQuedamos a su disposición para cualquier aclaración.\n\nUn saludo,\nAntonio Martins Junior\nAMJ Maintenance · Asset maintenance, just in time';
     const cc=el('input'); cc.type='checkbox'; cc.checked=true; const ccl=el('label','rpmk'); ccl.append(cc,document.createTextNode(' Enviarme una copia a '+REP_COPIA)); card.append(ccl);
     const st=el('div','rpms'), bar=el('div','rpma'), bv=el('button','out','📄 Ver el PDF que se enviará'), bs=el('button','go','✉ Enviar ahora'); bar.append(bv,bs); card.append(bar,st);
-    const hoyM=new Date().toLocaleDateString('sv-SE',{timeZone:'Europe/Madrid'}), base=()=>({docs:[model],logo,archivo,informe:{cliente:R.cl,tipo:R.tipo,desde:R.d0,hasta:R.d1,corte:R.d1<hoyM?R.d1:hoyM<R.d0?R.d0:hoyM,refs:R.refs}}), say=(t,k)=>{ st.textContent=t; st.className='rpms'+(k?' '+k:'') }, busy=b=>{ bv.disabled=bs.disabled=b };
+    const base=()=>({docs:[model],logo,archivo,informe:{cliente:R.cl,tipo:R.tipo,desde:R.d0,hasta:R.d1,corte:R.dc,refs:R.refs}}), say=(t,k)=>{ st.textContent=t; st.className='rpms'+(k?' '+k:'') }, busy=b=>{ bv.disabled=bs.disabled=b };
     /* Un solo PDF: el que se genera en «Ver» es el que se ve, se descarga y se adjunta. `prev` guarda esos bytes y el sello del servidor. */
     let prev=null, incierto=false; const fot=el('div','rpmf'); card.insertBefore(fot,st);
     const pintaFotos=()=>{ fot.textContent=''; fot.className='rpmf'; if(!prev) return; const f=prev.fotos;
@@ -528,13 +537,14 @@ const SECS={
    const fd=(d,o)=>new Date(d+'T12:00:00').toLocaleDateString('es-ES',o);
    const per=MS?(m=>m.charAt(0).toUpperCase()+m.slice(1))(fd(d1,{month:'long',year:'numeric'})):WK?((QN?(d0.slice(8)==='01'?'1.ª':'2.ª')+' quincena · del ':'Semana del ')+fd(d0,{day:'numeric',month:'long'})+' al '+fd(d1,{day:'numeric',month:'long',year:'numeric'})):(()=>{ const f=fd(repDay,{weekday:'long',day:'numeric',month:'long',year:'numeric'}); return f.charAt(0).toUpperCase()+f.slice(1) })();
    const LA=real().filter(o=>o.st==='completed'&&dayOf(o.fa)>=d0&&dayOf(o.fa)<=d1&&(!repCl||o.cl===repCl)).sort((x,y)=>new Date(x.fa)-new Date(y.fa)||x.ref-y.ref);
-   const wcl=[...new Set(LA.map(o=>o.cl))].sort((x,y)=>clName(x).localeCompare(clName(y)));
+   /* también los clientes con actividad anterior aunque no tengan cierres en el periodo: su informe (a cero) debe poder consultarse */
+   const wcl=[...new Set((WK?real().filter(o=>(o.cl==='HELP'||o.cl==='ENSO')&&o.st!=='cancelled'&&dayOf(o.ca)<=d1&&(!repCl||o.cl===repCl)):LA).map(o=>o.cl).concat(LA.map(o=>o.cl)))].sort((x,y)=>clName(x).localeCompare(clName(y)));
    selN=()=>WK?wcl.filter(c=>repSelW.has(c)).length:LA.filter(o=>repSel.has(o.id)).length;
    if(repView&&!selN()) repView=false;
    const L=repView?LA.filter(o=>repSel.has(o.id)):LA, SEL=!repView; updSel();
    const wrap=docs=>{ const w=el('div','repdoc rfw'); docs.forEach(d=>w.append(d)); return w };
-   if(WK){ repEnsure(LA.map(o=>o.id));
-     if(repView) return [ctl,src('Así lo verá el cliente: el informe completo '+DELA+'.'),wrap(wcl.filter(c=>repSelW.has(c)).map(c=>repFmt(LA.filter(o=>o.cl===c),d0,d1,true,QN,MS)))];
+   if(WK){ repEnsure(LA.map(o=>o.id)); repCtx();
+     if(repView) return [ctl,src('Así lo verá el cliente: el informe completo '+DELA+'.'),wrap(wcl.filter(c=>repSelW.has(c)).map(c=>repFmt(LA.filter(o=>o.cl===c),d0,d1,true,QN,MS,c)))];
      const card=el('div','repdoc'); card.append(el('h3','reph3','Informe '+ADJ+' · '+per));
      const tb=el('table','reptb sel wk'), hr=el('tr'); ['','Cliente','Órdenes finalizadas','Inmuebles','Materiales con IVA'].forEach((h,i)=>hr.append(el('th',i?null:'ck',h))); const th=el('thead'); th.append(hr); const bd=el('tbody');
      if(!wcl.length){ const r=el('tr'), e=el('td','empty','No hay órdenes terminadas '+(MS?'este mes':'esta '+PW)+'.'); e.colSpan=5; r.append(e); bd.append(r) }
@@ -749,7 +759,7 @@ function nwSummary(){
 
 /* ---------- arranque ---------- */
 function start(){ $('login').hidden=true; $('app').hidden=false; $('fab').hidden=false; load(); clearInterval(timer); timer=setInterval(()=>{ load(); liveLabel() },POLL) }
-function logout(){ clearSession(); clearInterval(timer); O=[]; prevRev={}; lastOk=0; $('app').hidden=true; $('login').hidden=false; $('fab').hidden=true; nwClose(); repSendClose(); /* al salir se cierra la ventana del informe y se liberan sus archivos */ repSel=new Set(); repSelW=new Set(); repView=false; for(const k in MED) delete MED[k]; for(const k in MAT) delete MAT[k]; for(const k in THU){ try{ if(typeof THU[k]==='string'&&THU[k].startsWith('blob:')) URL.revokeObjectURL(THU[k]) }catch(e){} delete THU[k] } }
+function logout(){ clearSession(); clearInterval(timer); O=[]; prevRev={}; lastOk=0; $('app').hidden=true; $('login').hidden=false; $('fab').hidden=true; nwClose(); repSendClose(); /* al salir se cierra la ventana del informe y se liberan sus archivos */ repSel=new Set(); repSelW=new Set(); repView=false; CTX=undefined; for(const k in MED) delete MED[k]; for(const k in MAT) delete MAT[k]; for(const k in THU){ try{ if(typeof THU[k]==='string'&&THU[k].startsWith('blob:')) URL.revokeObjectURL(THU[k]) }catch(e){} delete THU[k] } }
 $('lf').addEventListener('submit',async e=>{ e.preventDefault(); $('lerr').textContent=''; $('lb').disabled=true;
   try{ const em=$('le').value.trim().toLowerCase(); const j=await auth('token?grant_type=password',{email:em,password:$('lp').value});
     saveSession({access_token:j.access_token,refresh_token:j.refresh_token,expires_at:Date.now()+j.expires_in*1000,email:em},$('lr').checked); $('lp').value=''; start() }
