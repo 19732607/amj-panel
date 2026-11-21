@@ -55,6 +55,35 @@ function repThumb(m){ const a=el('a','rth'); a.href='#'; a.title=m.caption||''; 
   return a }
 function repPhotos(o){ const L=MED[o.id]; const w=el('div','rph'); if(L===undefined){ w.append(el('span','muted','Cargando fotos…')); return w }
   if(!L.length){ w.append(el('span','muted','Sin fotos')); return w } L.forEach(m=>w.append(repThumb(m))); return w }
+/* Informe diario con el formato de los informes que AMJ envía al cliente (vista «Ver») */
+function repDaily(L,day){
+  const fd=(d,o)=>new Date(d+'T12:00:00').toLocaleDateString('es-ES',o), cap1=t=>t?t.charAt(0).toUpperCase()+t.slice(1).toLowerCase():'';
+  const cls=[...new Set(L.map(o=>o.cl))], one=cls.length===1, cname=cls.map(clName).join(' + '), city=[...new Set(L.map(o=>cap1(o.loc)).filter(Boolean))].join(' / ');
+  const code=o=>(o.piso||o.ad||'—').replace(/^(ENSO|HELP)-/,''), dlong=fd(day,{day:'numeric',month:'long',year:'numeric'});
+  const doc=el('div','repdoc rf');
+  const top=el('div','rf-top'); const lg=document.querySelector('.brand img'); if(lg){ const im=el('img'); im.src=lg.src; im.alt='AMJ'; top.append(im) }
+  const tr=el('div','rf-tr'); tr.append(el('b',null,(cname+(city?' · '+city:'')).toUpperCase()),el('span',null,'Informe diario · '+fd(day,{day:'numeric',month:'short',year:'numeric'}))); top.append(tr); doc.append(top);
+  doc.append(el('h1','rf-h1','Informe diario de servicio'),el('div','rf-sub',[cname,city,dlong].filter(Boolean).join(' · ')));
+  const pisos=new Set(L.map(o=>o.piso||o.ad)).size, loaded=L.every(o=>o.id in MED), nf=L.reduce((a,o)=>a+(MED[o.id]||[]).length,0);
+  const intro=el('p','rf-intro'); intro.append(el('b',null,L.length+(L.length===1?' orden de trabajo finalizada':' órdenes de trabajo finalizadas')+' el '+dlong+'.'),document.createTextNode(' Se detallan las intervenciones por inmueble, el informe del técnico y las fotografías de cada trabajo.')); doc.append(intro);
+  const box=el('div','rf-kp'); const k=(v,t)=>{ const d=el('div'); d.append(el('b',null,v),el('span',null,t)); box.append(d) };
+  k(String(L.length),L.length===1?'orden finalizada':'órdenes finalizadas');
+  if(one&&cls[0]==='HELP'){ const m0=day.slice(0,8)+'01'; const n=new Set(real().filter(o=>o.cl==='HELP'&&o.st!=='cancelled'&&o.sa&&dayOf(o.sa)>=m0&&dayOf(o.sa)<=day).map(o=>(o.piso||o.ad)+'|'+dayOf(o.sa))).size;
+    k(n+' / 100','avisos consumidos'); k(String(Math.max(100-n,0)),'avisos disponibles al '+fd(day,{day:'2-digit',month:'2-digit'})) }
+  else k(String(pisos),pisos===1?'inmueble atendido':'inmuebles atendidos');
+  k(loaded?String(nf):'…','fotografías'); doc.append(box);
+  if(one){ doc.append(el('h2','rf-h2','Cómo trabajamos cada aviso')); const st=el('div','rf-steps');
+    ['Aviso de '+cname,'Orden en la app con el código del piso','Asignación de técnico y cita','Trabajo en el inmueble','Cierre con informe y fotos','Informe al cliente'].forEach((t,i)=>{ const d=el('div'); d.append(el('b',null,String(i+1)),el('span',null,t)); st.append(d) }); doc.append(st) }
+  doc.append(el('h2','rf-h2','Detalle de las intervenciones'));
+  const tb=el('table','rf-tb'), hr=el('tr'); ['Orden / inmueble','Incidencia y actuación','Estado'].forEach(h=>hr.append(el('th',null,h))); const th=el('thead'); th.append(hr); tb.append(th); const bd=el('tbody');
+  L.forEach(o=>{ const r=el('tr'), c=el('td'); const nov=/SIN POSIBILIDAD DE EJECUCI/i.test(o.report);
+    c.append(el('b',null,(o.work||'(sin descripción)').replace(/\.?$/,'. ')),document.createTextNode(o.report||'El técnico no escribió informe.')); c.style.whiteSpace='pre-wrap';
+    r.append(el('td','nwr','AMJ-'+o.ref+' · '+code(o)+(one?'':' · '+clName(o.cl))),c,el('td',null,nov?'Visita realizada sin posibilidad de ejecución':'Finalizada')); bd.append(r) });
+  tb.append(bd); doc.append(tb);
+  doc.append(el('h2','rf-h2','Fotos de las intervenciones'));
+  L.forEach(o=>{ const g=el('div','rf-og'); g.append(el('div','rf-oh','AMJ-'+o.ref+' · '+(o.work||'').replace(/\.$/,'')+' · '+code(o))); const w=repPhotos(o); w.className='rf-ph'; g.append(w); doc.append(g) });
+  const ft=el('div','rf-ft'); ft.append(el('span',null,'amjmaintenance.es · Informe para '+cname),el('span',null,'ASSET MAINTENANCE · JUST IN TIME')); doc.append(ft);
+  return doc }
 const eur2=v=>Number(v||0).toLocaleString('es-ES',{minimumFractionDigits:2,maximumFractionDigits:2})+' €';
 /* ---------- datos ---------- */
 const STATUS={pending_review:['Pendiente de revisión','s-pending','new'],pending_assignment:['Pendiente de asignar','s-pending','new'],
@@ -314,6 +343,7 @@ const SECS={
    const LA=real().filter(o=>o.st==='completed'&&dayOf(o.fa)>=d0&&dayOf(o.fa)<=d1&&(!repCl||o.cl===repCl)).sort((x,y)=>new Date(x.fa)-new Date(y.fa)||x.ref-y.ref);
    if(repView&&!LA.some(o=>repSel.has(o.id))) repView=false;
    const L=repView?LA.filter(o=>repSel.has(o.id)):LA, SEL=!repView; updSel();
+   if(repView&&!WK){ repEnsure(L.map(o=>o.id)); const cs=new Set(L.map(o=>o.cl)); const out=[ctl]; if(cs.size>1) out.push(el('div','repmsg','Has marcado órdenes de '+cs.size+' clientes distintos: para enviar, marca solo las de un cliente.')); out.push(src('Así lo verá el cliente: solo las órdenes que has marcado.'),repDaily(L,repDay)); return out }
    repEnsure(L.map(o=>o.id));
    const doc=el('div','repdoc'); const hd=el('div','rephd'); const lg=document.querySelector('.brand img'); if(lg){ const im=el('img'); im.src=lg.src; im.alt='AMJ'; hd.append(im) }
    const tt=el('div'); tt.append(el('h2',null,(WK?'Informe semanal':'Informe diario')+(repCl?' · '+clName(repCl):'')),el('div','repsub',per+' · '+L.length+(L.length===1?' orden terminada':' órdenes terminadas')+(SEL?' · marca las que quieres ver y enviar':''))); hd.append(tt); doc.append(hd);
@@ -332,7 +362,7 @@ const SECS={
    if(!L.length){ const tr=el('tr'), td=el('td','empty',WK?'No hay órdenes terminadas esta semana.':'No hay órdenes terminadas este día.'); td.colSpan=(WK?5:4)+(SEL?1:0); tr.append(td); bd.append(tr) }
    L.forEach(o=>{ const tr=el('tr'); const r=el('td'); const tx=el('div',o.report?null:'muted',o.report||'(El técnico no escribió informe)'); tx.style.whiteSpace='pre-wrap'; r.append(tx,repPhotos(o));
      if(SEL){ const c=el('td','ck'), ck=el('input'); ck.type='checkbox'; ck.checked=repSel.has(o.id); ck.onchange=()=>{ ck.checked?repSel.add(o.id):repSel.delete(o.id); updSel() }; cks.push(ck); c.append(ck); tr.append(c) }
-     if(WK) tr.append(el('td','nw',fd(dayOf(o.fa),{day:'2-digit',month:'2-digit'})));
+     if(WK) tr.append(el('td','nwr',fd(dayOf(o.fa),{day:'2-digit',month:'2-digit'})));
      tr.append(el('td','b','AMJ-'+o.ref),el('td',null,clName(o.cl)),el('td','b',o.piso||o.ad||'—'),r); bd.append(tr) });
    tb.append(bd); doc.append(tb);
    /* materiales (semanal) */
