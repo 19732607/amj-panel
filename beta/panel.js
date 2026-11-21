@@ -206,10 +206,11 @@ function repModel(d){
 function repLogo(){ const im=document.querySelector('.brand img'); if(!im||!im.naturalWidth) return ''; try{ const s=Math.min(1,640/im.naturalWidth), cv=document.createElement('canvas'); cv.width=Math.round(im.naturalWidth*s); cv.height=Math.round(im.naturalHeight*s); const x=cv.getContext('2d'); x.fillStyle='#fff'; x.fillRect(0,0,cv.width,cv.height); x.drawImage(im,0,0,cv.width,cv.height); return cv.toDataURL('image/jpeg',.92) }catch(e){ return '' } }
 /* Visor propio (PDF.js): no depende del visor del navegador ni de extensiones como Adobe Acrobat */
 let pdfjsP=null;
-function repPdfJs(){ return pdfjsP||(pdfjsP=new Promise((ok,ko)=>{ const sc=document.createElement('script'); sc.src='vendor/pdf.min.js'; sc.onload=()=>{ const L=window.pdfjsLib; if(!L){ ko(new Error('visor no disponible')); return } L.GlobalWorkerOptions.workerSrc='vendor/pdf.worker.min.js'; ok(L) }; sc.onerror=()=>{ pdfjsP=null; ko(new Error('no se pudo cargar el visor')) }; document.head.append(sc) })) }
-async function repPdfView(bytes,host){ host.textContent='Abriendo el PDF…'; const L=await repPdfJs(), pdf=await L.getDocument({data:bytes.slice(0)}).promise; host.textContent='';
+const repVend=f=>new URL('vendor/'+f,document.baseURI).href;
+function repPdfJs(){ return pdfjsP||(pdfjsP=import(repVend('pdf.min.mjs')).then(L=>{ L.GlobalWorkerOptions.workerSrc=repVend('pdf.worker.min.mjs'); return L }).catch(()=>{ pdfjsP=null; throw new Error('no se pudo cargar el visor') })) }
+async function repPdfView(bytes,host){ host.textContent='Abriendo el PDF…'; const L=await repPdfJs(), pdf=await L.getDocument({data:bytes.slice(0),standardFontDataUrl:repVend('standard_fonts/'),isEvalSupported:false}).promise; host.textContent='';
   const wCss=Math.min(host.clientWidth-24,900), dpr=Math.min(window.devicePixelRatio||1,2);
-  for(let n=1;n<=pdf.numPages;n++){ const pg=await pdf.getPage(n), v0=pg.getViewport({scale:1}), vp=pg.getViewport({scale:wCss/v0.width*dpr}), cv=document.createElement('canvas'); cv.width=Math.round(vp.width); cv.height=Math.round(vp.height); cv.style.width=wCss+'px'; cv.className='rpmp'; host.append(cv); await pg.render({canvasContext:cv.getContext('2d'),viewport:vp}).promise } }
+  for(let n=1;n<=pdf.numPages;n++){ const pg=await pdf.getPage(n), v0=pg.getViewport({scale:1}), vp=pg.getViewport({scale:wCss/v0.width*dpr}), cv=document.createElement('canvas'); cv.width=Math.round(vp.width); cv.height=Math.round(vp.height); cv.style.width=wCss+'px'; cv.className='rpmp'; host.append(cv); await pg.render({canvas:cv,canvasContext:cv.getContext('2d'),viewport:vp}).promise } }
 async function repCall(body){ const r=await fetch(SB+'/functions/v1/amj-informes-enviar',{method:'POST',headers:{...(await authHdr()),'Content-Type':'application/json'},body:JSON.stringify(body)}); let j={}; try{ j=await r.json() }catch(e){} if(!r.ok||!j.ok){ const er=new Error(j.error||('HTTP '+r.status)); er.codigo=j.codigo||''; er.http=r.status; er.j=j; throw er } return j }
 const repSha=async u=>[...new Uint8Array(await crypto.subtle.digest('SHA-256',u))].map(x=>x.toString(16).padStart(2,'0')).join('');
 let repLibera=[]; /* archivos (direcciones blob) de la ventana de envío, para liberarlos al cerrarla */
@@ -236,6 +237,7 @@ function repSendOpen(){
     let prev=null, incierto=false; const fot=el('div','rpmf'); card.insertBefore(fot,st);
     const pintaFotos=()=>{ fot.textContent=''; fot.className='rpmf'; if(!prev) return; const f=prev.fotos;
       fot.append(el('b',null,'Fotos: '),document.createTextNode(f.solicitadas+' solicitadas · '+f.incluidas+' incluidas en el PDF · '+f.faltan+(f.faltan===1?' no se ha podido cargar':' no se han podido cargar')+'.'));
+      if(f.plazo_agotado) fot.append(el('div',null,'El servidor agotó el tiempo de carga de las fotos: las que faltan no han entrado. Vuelve a generar el PDF o envía un periodo más corto.'));
       if(f.faltan){ fot.classList.add('warn'); fot.append(el('div',null,'Faltan en: '+f.detalle.map(d=>d.titulo.split(' · ')[0]+' ('+d.n+')').join(', ')+'. Si las necesitas, cierra, espera y vuelve a generar el PDF.')) }
       if(prev.cliente) fot.append(el('div',null,'Cliente comprobado por el servidor: '+prev.cliente.nombre+' · '+R.refs.length+(R.refs.length===1?' orden':' órdenes')+', todas suyas.'));
       if((prev.prefijo||[]).length){ fot.classList.add('warn'); fot.append(el('div',null,'Órdenes identificadas solo por el código del inmueble (sin ficha de cliente): '+prev.prefijo.map(r=>'AMJ-'+r).join(', ')+'.')) }
