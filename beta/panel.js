@@ -6,7 +6,7 @@
 const SB='https://biwjrbcfupmbpoxnrolt.supabase.co', KEY='sb_publishable_ywkQpKdfMksufdqWkv-fyA_OtcxTXEm';
 const TZ='Europe/Madrid', POLL=15000, PAGE=100, MAXPAGES=200, STORE='amj.panel.session';
 const $=id=>document.getElementById(id);
-let session=null, WARN='', TEST=new Set(), T=null, M=null, P=null, RH=null, payT='', sec='ordenes', kpiDays='all', kpiFrom='', kpiTo='', RV=null, O=[], prevRev={}, view='all', lastOk=0, timer=null, loading=false;
+let session=null, WARN='', TEST=new Set(), T=null, M=null, P=null, RH=null, payT='', sec='ordenes', kpiDays='all', kpiFrom='', kpiTo='', RV=null, CP=null, O=[], prevRev={}, view='all', lastOk=0, timer=null, loading=false;
 
 /* ---------- sesión ---------- */
 function storage(){ try{ return localStorage.getItem(STORE)?localStorage:sessionStorage }catch(e){ return null } }
@@ -83,6 +83,7 @@ async function load(){
     try{ T=await rpc('amj_admin_technicians',{}) }catch(e){ if(e.message==='ACCESS_DENIED') throw e }
     try{ M=await rpc('amj_admin_materials_pending',{}) }catch(e){ if(e.message==='ACCESS_DENIED') throw e }
     try{ RV=await rpc('amj_admin_reviews',{}) }catch(e){ if(e.message==='ACCESS_DENIED') throw e }
+    if(sec==='clientes'||CP===null){ try{ CP=await rpc('amj_client_properties',{}) }catch(e){ if(e.message==='ACCESS_DENIED') throw e } }
     if(sec==='pagos'||P===null){ try{ P=await rpc('amj_admin_payouts',{}) }catch(e){ if(e.message==='ACCESS_DENIED') throw e } }
     if(sec==='materiales'||RH===null){ try{ RH=await rpc('amj_admin_receipts_history',{p_days:60}) }catch(e){ if(e.message==='ACCESS_DENIED') throw e } }
     lastOk=Date.now(); if(WARN) showErr(WARN); else $('err').hidden=true; render(changed); fillFilters(); renderSec();
@@ -223,13 +224,22 @@ const SECS={
    return [kpis([[list.length,'técnicos aprobados'],[list.filter(t=>t.available).length,'disponibles ahora'],[list.reduce((a,t)=>a+Number(t.open_orders||0),0),'órdenes abiertas asignadas'],[R.filter(o=>o.st==='in_progress').length,'trabajando ahora']]),
      src('Técnicos aprobados en el servidor (sin cuentas de prueba ni de revisión de Google Play). Horas = cronómetro de la app en órdenes terminadas los últimos 30 días (sin los ajustes de horas que hace AMJ).'),
      card('Equipo',['Técnico','Estado','Abiertas','Trabajando ahora','Terminadas 30 días','Horas 30 días','Último trabajo'],rows,T?'No hay técnicos aprobados.':'Cargando…')] }],
- clientes:['Clientes e inmuebles',()=>{ const R=real().filter(o=>o.st!=='cancelled'), byCl={};
-   R.forEach(o=>{ (byCl[o.cl]=byCl[o.cl]||[]).push(o) });
-   const out=[kpis(Object.keys(byCl).sort().map(c=>[byCl[c].length,'órdenes '+clName(c)])),src(RANGE)];
-   Object.keys(byCl).sort().forEach(c=>{ const byP={}; byCl[c].forEach(o=>{ const k=o.piso||o.ad||'(sin piso)'; (byP[k]=byP[k]||[]).push(o) });
-     const rows=Object.keys(byP).map(k=>{ const L=byP[k], last=L.map(o=>o.fa||o.ca).sort().pop();
-       return {n:L.length,cells:[k,L.length,L.filter(o=>o.st==='completed').length,L.filter(o=>o.st!=='completed').length,dur(L.reduce((a,o)=>a+(o.min||0),0)||null),fmtD(last)]} }).sort((a,b)=>b.n-a.n);
-     out.push(card(clName(c)+' · '+Object.keys(byP).length+' inmuebles',['Piso / dirección','Órdenes','Terminadas','Abiertas','Horas','Última'],rows)) });
+ clientes:['Clientes e inmuebles',()=>{ const R=real().filter(o=>o.st!=='cancelled');
+   const city=v=>{ v=(v||'').trim(); return v?v.toLowerCase().replace(/(^|[\s-])\S/g,m=>m.toUpperCase()):'(sin ciudad)' };
+   const G={}, idx={}, grpOf=(cl,ci)=>{ const k=cl+'|'+ci; return G[k]=G[k]||{cl,ci,props:{}} };
+   (CP||[]).forEach(a=>{ const code=a.client_code+'-'+a.code, ci=city(a.locality); const p={code,ad:a.address||'',ci,L:[]}; grpOf(a.client_code,ci).props[code]=p; idx[code.toUpperCase()]=p });
+   R.forEach(o=>{ const k=(o.piso||o.ad||'(sin piso)'); let p=idx[k.toUpperCase()];
+     if(!p){ const ci=city(o.loc); p={code:o.piso||'',ad:o.piso?(o.ad||''):k,ci,L:[]}; grpOf(o.cl,ci).props[k]=p; idx[k.toUpperCase()]=p }
+     p.L.push(o) });
+   const byCl={}; R.forEach(o=>{ byCl[o.cl]=(byCl[o.cl]||0)+1 });
+   const out=[kpis(Object.keys(byCl).sort().map(c=>[byCl[c],'órdenes '+clName(c)]).concat([[Object.keys(idx).length,'inmuebles en total']])),
+     src(RANGE+' Inmuebles: listado de pisos de cada cliente guardado en el servidor; aparecen todos, también los que todavía no tienen órdenes.'+(CP===null?' (Cargando el listado de inmuebles…)':''))];
+   Object.values(G).sort((x,y)=>clName(x.cl).localeCompare(clName(y.cl))||x.ci.localeCompare(y.ci)).forEach(g=>{
+     const P_=Object.values(g.props), conOrd=P_.filter(p=>p.L.length).length;
+     const rows=P_.map(p=>{ const L=p.L, last=L.map(o=>o.fa||o.ca).sort().pop();
+       return {n:L.length,c:p.code||p.ad,cells:[p.code||'—',p.ad||'—',p.ci,L.length,L.filter(o=>o.st==='completed').length,L.filter(o=>o.st!=='completed').length,L.length?dur(L.reduce((a,o)=>a+(o.min||0),0)||null):'—',L.length?fmtD(last):'—']} })
+       .sort((a,b)=>b.n-a.n||a.c.localeCompare(b.c));
+     out.push(card(clName(g.cl)+' · '+g.ci+' · '+P_.length+(P_.length===1?' inmueble':' inmuebles')+' · '+conOrd+' con órdenes',['Piso','Dirección','Ciudad','Órdenes','Terminadas','Abiertas','Horas','Última'],rows)) });
    return out }],
  pagos:['Pagos a técnicos',()=>{
    if(!P) return [el('div','empty','Cargando pagos…')];
