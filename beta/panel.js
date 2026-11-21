@@ -61,6 +61,7 @@ function repFmt(L,d0,d1,WK,QN){ const PW=QN?'quincena':'semana';
   const cls=[...new Set(L.map(o=>o.cl))], one=cls.length===1, cname=cls.map(clName).join(' + '), city=[...new Set(L.map(o=>cap1(o.loc)).filter(Boolean))].join(' / ');
   const code=o=>(o.piso||o.ad||'—').replace(/^(ENSO|HELP)-/,''), dlong=fd(d1,{day:'numeric',month:'long',year:'numeric'});
   const per=(QN?(d0.slice(8)==='01'?'1.ª':'2.ª')+' quincena de '+fd(d1,{month:'long'})+' · ':'')+(!WK?dlong:'del '+fd(d0,d0.slice(0,7)===d1.slice(0,7)?{day:'numeric'}:{day:'numeric',month:'long'})+' al '+dlong);
+  const dc=d1>todayStr()?todayStr():d1, live=WK&&dc<d1;
   const H=t=>el('h2','rf-h2',t), table=(heads,cl)=>{ const tb=el('table','rf-tb'+(cl?' '+cl:'')), hr=el('tr'); heads.forEach(h=>hr.append(el('th',null,h))); const th=el('thead'); th.append(hr); const bd=el('tbody'); tb.append(th,bd); return [tb,bd] };
   const row=(bd,cells,cl)=>{ const r=el('tr',cl||null); cells.forEach(c=>{ if(c instanceof Node) r.append(c); else r.append(el('td',null,c)) }); bd.append(r); return r };
   const td=(t,c)=>el('td',c||null,t);
@@ -73,9 +74,10 @@ function repFmt(L,d0,d1,WK,QN){ const PW=QN?'quincena':'semana';
   const help=one&&cls[0]==='HELP', vkey=o=>(o.piso||o.ad)+'|'+dayOf(o.sa), m0=d1.slice(0,8)+'01';
   const hv=help?real().filter(o=>o.cl==='HELP'&&o.st!=='cancelled'&&o.sa&&dayOf(o.sa)>=m0&&dayOf(o.sa)<=d1):[], cupo=new Set(hv.map(vkey)).size;
   const intro=el('p','rf-intro'); intro.append(el('b',null,L.length+(L.length===1?' orden de trabajo finalizada ':' órdenes de trabajo finalizadas ')+(WK?per.replace(/^.* · /,''):'el '+dlong)+'.'),document.createTextNode(' Se detallan las intervenciones por inmueble, el informe del técnico'+(WK?', las fotografías y los materiales declarados por los técnicos.':' y las fotografías de cada trabajo.'))); doc.append(intro);
+  if(live) doc.append(el('p','rf-live','Periodo en curso: datos hasta el '+dm(dc)+'. El periodo termina el '+dm(d1)+'.'));
   const box=el('div','rf-kp'); const k=(v,t)=>{ const d=el('div'); d.append(el('b',null,v),el('span',null,t)); box.append(d) };
   k(String(L.length),L.length===1?'orden finalizada':'órdenes finalizadas');
-  if(help){ k(cupo+' / 100','avisos consumidos'); k(String(Math.max(100-cupo,0)),'avisos disponibles al '+dm(d1)) } else k(String(pisos),pisos===1?'inmueble atendido':'inmuebles atendidos');
+  if(help){ k(cupo+' / 100','avisos consumidos'); k(String(Math.max(100-cupo,0)),'avisos disponibles al '+dm(dc)) } else k(String(pisos),pisos===1?'inmueble atendido':'inmuebles atendidos');
   if(WK) k(mload?eur2(sumM(allM,'total')):'…','materiales declarados, IVA incluido'); else k(loaded?String(nf):'…','fotografías'); doc.append(box);
   if(one){ doc.append(H('Cómo trabajamos cada aviso')); const st=el('div','rf-steps');
     ['Aviso de '+cname,'Orden en la app con el código del piso','Asignación de técnico y cita','Trabajo en el inmueble','Cierre con informe y fotos',help?'Aviso computado e informe al cliente':'Informe al cliente'].forEach((t,i)=>{ const d=el('div'); d.append(el('b',null,String(i+1)),el('span',null,t)); st.append(d) }); doc.append(st) }
@@ -86,11 +88,11 @@ function repFmt(L,d0,d1,WK,QN){ const PW=QN?'quincena':'semana';
     Object.keys(sv).sort((x,y)=>sv[y].length-sv[x].length||x.localeCompare(y)).forEach(s=>row(b1,[s,String(sv[s].length),sv[s].join(', ')])); doc.append(t1) }
   if(WK&&help){ /* cupo */
     doc.append(H('Visitas y saldo del cupo de '+fd(d1,{month:'long'}))); const prev=new Set(hv.filter(o=>dayOf(o.sa)<d0).map(vkey)).size;
-    const p=el('p','rf-intro','Al cierre del '+dm(d1)+': '+cupo+' avisos consumidos de 100 y '+Math.max(100-cupo,0)+' disponibles. Cupo: 1 inmueble + día de inicio = 1 aviso.'); doc.append(p);
+    const p=el('p','rf-intro',(live?'A fecha de ':'Al cierre del ')+dm(dc)+': '+cupo+' avisos consumidos de 100 y '+Math.max(100-cupo,0)+' disponibles. Cupo: 1 inmueble + día de inicio = 1 aviso.'); doc.append(p);
     const [t2,b2]=table(['Fecha','Órdenes / visitas','Avisos consumidos']); const byD={}; hv.filter(o=>dayOf(o.sa)>=d0).forEach(o=>{ const d=dayOf(o.sa); (byD[d]=byD[d]||[]).push(o) });
     Object.keys(byD).sort().forEach(d=>row(b2,[dm(d),byD[d].sort((x,y)=>x.ref-y.ref).map(o=>'AMJ-'+o.ref).join(', '),String(new Set(byD[d].map(vkey)).size)]));
     if(d0>m0) row(b2,['Hasta '+dm(new Date(new Date(d0+'T12:00:00')-864e5).toLocaleDateString('sv-SE')),'Saldo anterior del mes',String(prev)]);
-    row(b2,['Total','Cupo mensual: 100. Saldo disponible al '+dm(d1)+': '+Math.max(100-cupo,0),String(cupo)],'tot'); doc.append(t2) }
+    row(b2,['Total','Cupo mensual: 100. Saldo disponible al '+dm(dc)+': '+Math.max(100-cupo,0),String(cupo)],'tot'); doc.append(t2) }
   doc.append(H(WK?'Detalle de las incidencias':'Detalle de las intervenciones'));
   const [tb,bd]=table((WK?['Fecha']:[]).concat(['Orden / inmueble','Incidencia y actuación','Estado']),'det');
   L.forEach(o=>{ const c=el('td'); const nov=/SIN POSIBILIDAD DE EJECUCI/i.test(o.report);
@@ -120,7 +122,7 @@ function repFmt(L,d0,d1,WK,QN){ const PW=QN?'quincena':'semana';
     if(mload&&withM.length) row(b3,['','','Total de la '+PW,td(eur2(sumM(allM,'subtotal')),'r'),td(eur2(sumM(allM,'iva')),'r'),td(eur2(sumM(allM,'total')),'r')],'tot');
     doc.append(t3);
     const open=real().filter(o=>!['completed','cancelled'].includes(o.st)&&cls.includes(o.cl)&&dayOf(o.ca)<=d1);
-    if(open.length){ doc.append(H('Órdenes abiertas al cierre de la '+PW)); const [t4,b4]=table(['Orden / inmueble','Trabajo','Estado']); open.forEach(o=>row(b4,[td('AMJ-'+o.ref+' · '+code(o),'nwr'),o.work,(STATUS[o.st]||[o.st])[0]])); doc.append(t4) } }
+    if(open.length){ doc.append(H(live?'Órdenes abiertas a fecha de '+dm(dc):'Órdenes abiertas al cierre de la '+PW)); const [t4,b4]=table(['Orden / inmueble','Trabajo','Estado']); open.forEach(o=>row(b4,[td('AMJ-'+o.ref+' · '+code(o),'nwr'),o.work,(STATUS[o.st]||[o.st])[0]])); doc.append(t4) } }
   const ft=el('div','rf-ft'); ft.append(el('span',null,'amjmaintenance.es · Informe para '+cname),el('span',null,'ASSET MAINTENANCE · JUST IN TIME')); doc.append(ft);
   return doc }
 const eur2=v=>Number(v||0).toLocaleString('es-ES',{minimumFractionDigits:2,maximumFractionDigits:2})+' €';
