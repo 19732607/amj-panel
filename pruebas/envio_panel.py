@@ -1,0 +1,61 @@
+"""Prueba del panel (bloque 1): el PDF que se ve, el que se descarga y el que se envía son el mismo archivo.
+Datos ficticios; la función del servidor se simula en el navegador. Ejecutar:  python3 pruebas/envio_panel.py
+Necesita Playwright para Python con Chromium."""
+import asyncio, base64, functools, hashlib, http.server, json, pathlib, shutil, tempfile, threading
+from playwright.async_api import async_playwright
+
+RAIZ = pathlib.Path(__file__).resolve().parent.parent
+PDF = (RAIZ / "pruebas" / "ficticio.pdf").read_bytes(); SHA = hashlib.sha256(PDF).hexdigest()
+tmp = pathlib.Path(tempfile.mkdtemp()); shutil.copytree(RAIZ / "beta", tmp / "beta")
+js = (tmp / "beta" / "panel.js").read_text(encoding="utf-8"); i = js.rindex("session=loadSession()")
+(tmp / "beta" / "panel.js").write_text(js[:i] + "window.__t=c=>eval(c);\n" + js[i:], encoding="utf-8")   # gancho solo para la prueba
+class H(http.server.SimpleHTTPRequestHandler):
+    def log_message(self, *a): pass
+srv = http.server.ThreadingHTTPServer(("127.0.0.1", 8791), functools.partial(H, directory=str(tmp))); threading.Thread(target=srv.serve_forever, daemon=True).start()
+
+PREPARA = """()=>{ __t(`session={access_token:'x',expires_at:Date.now()+9e9};
+  O=normalize([1,2].map(i=>({id:i,reference:900+i,revision:1,status:'completed',service:'Fontanería',description:'FICT-P'+i+' | Trabajo ficticio '+i,address:'',locality:'Ciudad',
+    created_at:'2026-11-18T09:00:00Z',started_at:'2026-11-19T09:00:00Z',finished_at:'2026-11-19T10:00:00Z',technician_name:'Nombre Apellido',technician_id:'t1',customer_name:'',report:'Informe ficticio.'})));
+  computeTags(); RV=[]; [1,2].forEach(i=>{ MED[i]=[{id:'m'+i,object_path:'o/'+i+'.jpg'}]; THU['m'+i]='data:image/gif;base64,R0lGODlhAQABAAAAACw='; MAT[i]=[] });
+  document.querySelectorAll('[hidden]').forEach(e=>e.hidden=false); document.getElementById('nw').hidden=true; document.getElementById('login').style.display='none'; lastOk=1;
+  sec='informes'; repPer='dia'; repDay='2026-11-19'; repCl=''; repSel=new Set([1,2]); repView=true; renderSec(); repSendOpen();`) }"""
+ok = lambda c, m: (print("OK ·", m) if c else (_ for _ in ()).throw(AssertionError(m)))
+
+async def main():
+    async with async_playwright() as p:
+        b = await p.chromium.launch(); pg = await b.new_page(viewport={"width": 1300, "height": 950}); errores = []; pg.on("pageerror", lambda e: errores.append(str(e)))
+        llamadas, modo = [], {"enviar": "ok"}
+        async def funcion(route):
+            cuerpo = json.loads(route.request.post_data); llamadas.append(cuerpo)
+            if cuerpo["accion"] == "pdf":
+                return await route.fulfill(json={"ok": True, "enviado": False, "paginas": 1, "bytes": len(PDF), "archivo": "Informe_ficticio.pdf", "sha256": SHA, "caduca": 9e15, "sello": "SELLO.FICTICIO",
+                    "fotos": {"solicitadas": 2, "incluidas": 1, "faltan": 1, "detalle": [{"titulo": "AMJ-902 · Trabajo ficticio 2 · P2", "n": 1}]}, "pdf_b64": base64.b64encode(PDF).decode()})
+            m = modo["enviar"]
+            if m == "incierto": return await route.fulfill(status=504, json={"error": "sin respuesta", "codigo": "RESULTADO_INCIERTO"})
+            if m == "distinto": return await route.fulfill(status=409, json={"error": "El PDF que se intenta enviar no es el que se revisó. Pulsa otra vez «Ver el PDF que se enviará», revísalo y vuelve a enviar.", "codigo": "PDF_DISTINTO"})
+            return await route.fulfill(json={"ok": True, "enviado": True, "para": cuerpo["para"], "proveedor": "correo-1", "archivo": "Informe_ficticio.pdf", "bytes": len(PDF), "sha256": SHA, "clave": "k"})
+        await pg.route("**/functions/v1/amj-informes-enviar", funcion)
+        await pg.goto("http://127.0.0.1:8791/beta/index.html"); await pg.evaluate(PREPARA)
+        estado = lambda: pg.inner_text(".rpms"); enviar = pg.locator(".rpma .go"); ver = pg.locator(".rpma .out").first
+        await pg.fill(".rpml input >> nth=0", "destinatario@prueba.example")
+        await enviar.click(); ok("Primero pulsa" in await estado() and not llamadas, "no deja enviar sin haber generado y revisado el PDF")
+        await ver.click(); await pg.wait_for_selector(".rpmv canvas")
+        ok(len(llamadas) == 1 and llamadas[0]["accion"] == "pdf", "«Ver» genera el PDF una vez")
+        descarga = await pg.evaluate("async()=>{ const a=document.querySelector('.rpms a[download]'); const u=new Uint8Array(await (await fetch(a.href)).arrayBuffer()); const h=await crypto.subtle.digest('SHA-256',u); return [a.download,[...new Uint8Array(h)].map(x=>x.toString(16).padStart(2,'0')).join('')] }")
+        ok(descarga == ["Informe_ficticio.pdf", SHA], "la descarga es el mismo archivo que la vista previa (misma huella)")
+        f = await pg.inner_text(".rpmf"); ok("2 solicitadas" in f and "1 incluidas" in f and "1 no se ha podido cargar" in f and "AMJ-902" in f and SHA[:12] in f, "aviso de fotos solicitadas, incluidas y ausentes, visible antes de confirmar")
+        await enviar.click(); ok("faltan 1 fotos" in await estado() and len(llamadas) == 1, "la confirmación recuerda las fotos que faltan y aún no envía")
+        await pg.fill(".rpml input >> nth=1", "Asunto cambiado"); ok("Enviar ahora" in await enviar.inner_text(), "cambiar el asunto obliga a confirmar otra vez")
+        modo["enviar"] = "incierto"; await enviar.click(); await enviar.click(); await pg.wait_for_function("document.querySelector('.rpma .go').textContent.includes('Reintentar')")
+        ok("No se sabe si el correo ha salido" in await estado(), "respuesta perdida: se muestra como resultado incierto")
+        modo["enviar"] = "ok"; await enviar.click(); await pg.wait_for_function("document.querySelector('.rpma .go').textContent.includes('Enviado')")
+        e1, e2 = llamadas[1], llamadas[2]
+        ok(e1 == e2, "el reintento envía exactamente la misma petición")
+        ok(hashlib.sha256(base64.b64decode(e2["pdf_b64"])).hexdigest() == SHA and e2["sello"] == "SELLO.FICTICIO" and "docs" not in e2, "al enviar viajan los bytes revisados y su sello; no se vuelve a generar el informe")
+        ok(SHA[:12] in await estado(), "el mensaje final muestra la huella del adjunto")
+        await pg.evaluate("()=>__t('repSendOpen()')"); await pg.fill(".rpml input >> nth=0", "destinatario@prueba.example"); await ver.click(); await pg.wait_for_selector(".rpmv canvas")
+        modo["enviar"] = "distinto"; await enviar.click(); await enviar.click(); await pg.wait_for_function("document.querySelector('.rpms').textContent.includes('No se envió')")
+        ok(await pg.locator(".rpmv").count() == 0 and "Ver el PDF que se enviará" in await estado(), "si el servidor rechaza el archivo, se retira la vista previa y se explica cómo seguir")
+        await pg.evaluate("()=>__t('logout()')"); ok(await pg.locator("#rpm").count() == 0 and await pg.evaluate("()=>__t('repLibera.length+Object.keys(MED).length+Object.keys(MAT).length')") == 0, "al cerrar sesión se cierra la ventana y se liberan archivos, fotos y materiales")
+        ok(not errores, "sin errores de JavaScript"); await b.close()
+asyncio.run(main()); srv.shutdown()

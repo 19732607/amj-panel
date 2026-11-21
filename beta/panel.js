@@ -192,12 +192,15 @@ function repPdfJs(){ return pdfjsP||(pdfjsP=new Promise((ok,ko)=>{ const sc=docu
 async function repPdfView(bytes,host){ host.textContent='Abriendo el PDF…'; const L=await repPdfJs(), pdf=await L.getDocument({data:bytes.slice(0)}).promise; host.textContent='';
   const wCss=Math.min(host.clientWidth-24,900), dpr=Math.min(window.devicePixelRatio||1,2);
   for(let n=1;n<=pdf.numPages;n++){ const pg=await pdf.getPage(n), v0=pg.getViewport({scale:1}), vp=pg.getViewport({scale:wCss/v0.width*dpr}), cv=document.createElement('canvas'); cv.width=Math.round(vp.width); cv.height=Math.round(vp.height); cv.style.width=wCss+'px'; cv.className='rpmp'; host.append(cv); await pg.render({canvasContext:cv.getContext('2d'),viewport:vp}).promise } }
-async function repCall(body){ const r=await fetch(SB+'/functions/v1/amj-informes-enviar',{method:'POST',headers:{...(await authHdr()),'Content-Type':'application/json'},body:JSON.stringify(body)}); let j={}; try{ j=await r.json() }catch(e){} if(!r.ok||!j.ok) throw new Error(j.error||('HTTP '+r.status)); return j }
+async function repCall(body){ const r=await fetch(SB+'/functions/v1/amj-informes-enviar',{method:'POST',headers:{...(await authHdr()),'Content-Type':'application/json'},body:JSON.stringify(body)}); let j={}; try{ j=await r.json() }catch(e){} if(!r.ok||!j.ok){ const er=new Error(j.error||('HTTP '+r.status)); er.codigo=j.codigo||''; er.http=r.status; er.j=j; throw er } return j }
+const repSha=async u=>[...new Uint8Array(await crypto.subtle.digest('SHA-256',u))].map(x=>x.toString(16).padStart(2,'0')).join('');
+let repLibera=[]; /* archivos (direcciones blob) de la ventana de envío, para liberarlos al cerrarla */
+function repSendClose(){ const o=$('rpm'); if(o) o.remove(); repLibera.forEach(u=>{ try{ URL.revokeObjectURL(u) }catch(e){} }); repLibera=[] }
 function repSendOpen(){
   const docs=[...document.querySelectorAll('#obody .rf')].filter(d=>d._rep); if(!docs.length) return;
   if(docs.some(d=>!d._rep.ids.every(id=>id in MED&&id in MAT))){ repMsg='Todavía se están cargando las fotos y los materiales. Espera unos segundos y vuelve a pulsar «Enviar por email».'; renderSec(); return }
-  const old=$('rpm'); if(old) old.remove();
-  const ov=el('div','rpm'); ov.id='rpm'; const box=el('div','rpmb'); ov.append(box); const hd=el('div','rpmh'); const x=el('button','out','✕ Cerrar'); x.onclick=()=>ov.remove(); hd.append(el('h3',null,'Enviar por email'),x); box.append(hd);
+  repSendClose();
+  const ov=el('div','rpm'); ov.id='rpm'; const box=el('div','rpmb'); ov.append(box); const hd=el('div','rpmh'); const x=el('button','out','✕ Cerrar'); x.onclick=repSendClose; hd.append(el('h3',null,'Enviar por email'),x); box.append(hd);
   const logo=repLogo(), fdl=d=>d.slice(8,10)+'/'+d.slice(5,7)+'/'+d.slice(0,4);
   docs.forEach(d=>{ const R=d._rep, model=repModel(d), card=el('div','rpmc'), nombre='Informe '+R.tipo+' de servicio '+R.cname;
     const perTxt=R.tipo==='diario'?'del '+R.per:R.tipo==='mensual'?'de '+R.per:R.per, archivo='Informe_'+R.tipo+'_'+R.cl.replace(/\+/g,'-')+'_'+R.d0+(R.d1!==R.d0?'_'+R.d1:'');
@@ -210,24 +213,38 @@ function repSendOpen(){
     const tx=fld('Texto del correo',el('textarea')); tx.rows=9; tx.value='Buenas tardes,\n\nAdjuntamos el informe '+R.tipo+' de servicio de '+R.cname+' '+perTxt+'.\n\nEn el PDF encontrará el detalle de las intervenciones por inmueble, con el informe del técnico y las fotografías de cada trabajo'+(R.mat?', y la relación de materiales':'')+'.\n\nQuedamos a su disposición para cualquier aclaración.\n\nUn saludo,\nAntonio Martins Junior\nAMJ Maintenance · Asset maintenance, just in time';
     const cc=el('input'); cc.type='checkbox'; cc.checked=true; const ccl=el('label','rpmk'); ccl.append(cc,document.createTextNode(' Enviarme una copia a '+REP_COPIA)); card.append(ccl);
     const st=el('div','rpms'), bar=el('div','rpma'), bv=el('button','out','📄 Ver el PDF que se enviará'), bs=el('button','go','✉ Enviar ahora'); bar.append(bv,bs); card.append(bar,st);
-    const nuevaClave=()=>(crypto.randomUUID?crypto.randomUUID():String(Date.now())+Math.random().toString(36).slice(2)).replace(/[^A-Za-z0-9-]/g,'');
     const base=()=>({docs:[model],logo,archivo}), say=(t,k)=>{ st.textContent=t; st.className='rpms'+(k?' '+k:'') }, busy=b=>{ bv.disabled=bs.disabled=b };
-    bv.onclick=async()=>{ busy(true); say('Generando el PDF… (puede tardar si hay muchas fotos)');
-      try{ const j=await repCall({...base(),accion:'pdf'}); const bin=atob(j.pdf_b64), u=new Uint8Array(bin.length); for(let i=0;i<bin.length;i++) u[i]=bin.charCodeAt(i); const url=URL.createObjectURL(new Blob([u],{type:'application/pdf'}));
-        say('PDF listo: '+j.paginas+(j.paginas===1?' página, ':' páginas, ')+j.fotos+' fotos, '+(j.bytes/1048576).toFixed(1).replace('.',',')+' MB. ','ok');
-        const dl=el('a','rpmlk','Descargar PDF'); dl.href=url; dl.download=j.archivo||(archivo+'.pdf'); st.append(dl);
+    /* Un solo PDF: el que se genera en «Ver» es el que se ve, se descarga y se adjunta. `prev` guarda esos bytes y el sello del servidor. */
+    let prev=null, incierto=false; const fot=el('div','rpmf'); card.insertBefore(fot,st);
+    const pintaFotos=()=>{ fot.textContent=''; fot.className='rpmf'; if(!prev) return; const f=prev.fotos;
+      fot.append(el('b',null,'Fotos: '),document.createTextNode(f.solicitadas+' solicitadas · '+f.incluidas+' incluidas en el PDF · '+f.faltan+(f.faltan===1?' no se ha podido cargar':' no se han podido cargar')+'.'));
+      if(f.faltan){ fot.classList.add('warn'); fot.append(el('div',null,'Faltan en: '+f.detalle.map(d=>d.titulo.split(' · ')[0]+' ('+d.n+')').join(', ')+'. Si las necesitas, cierra, espera y vuelve a generar el PDF.')) }
+      fot.append(el('div','rpmh2','Archivo: '+prev.archivo+' · '+prev.paginas+(prev.paginas===1?' página':' páginas')+' · '+(prev.bytes.length/1048576).toFixed(1).replace('.',',')+' MB · huella '+prev.sha.slice(0,12)+'…')) };
+    const reinicia=()=>{ if(bs.dataset.ok==='1'&&!bs.disabled){ bs.dataset.ok=''; bs.textContent='✉ Enviar ahora' } if(incierto){ incierto=false; say('Has cambiado los datos del envío: ya no es un reintento del anterior. Tendrás que confirmarlo de nuevo.') } };
+    bv.onclick=async()=>{ busy(true); say('Generando el PDF… (puede tardar si hay muchas fotos)'); prev=null; pintaFotos(); reinicia();
+      try{ const j=await repCall({...base(),accion:'pdf'}); const bin=atob(j.pdf_b64), u=new Uint8Array(bin.length); for(let i=0;i<bin.length;i++) u[i]=bin.charCodeAt(i);
+        const sha=await repSha(u); if(sha!==j.sha256||u.length!==j.bytes) throw new Error('el archivo recibido no coincide con el generado por el servidor; vuelve a intentarlo');
+        const url=URL.createObjectURL(new Blob([u],{type:'application/pdf'})); repLibera.push(url);
+        prev={bytes:u,b64:j.pdf_b64,sha,sello:j.sello,caduca:j.caduca,fotos:j.fotos,paginas:j.paginas,archivo:j.archivo||(archivo+'.pdf'),url}; pintaFotos();
+        say('PDF listo. Es el archivo que se adjuntará: revísalo antes de enviar. ','ok');
+        const dl=el('a','rpmlk','Descargar este PDF'); dl.href=url; dl.download=prev.archivo; st.append(dl);
         const old=card.querySelector('.rpmv'); if(old) old.remove(); const host=el('div','rpmv'); card.append(host); box.classList.add('wide'); host.scrollIntoView({behavior:'smooth',block:'nearest'});
-        try{ await repPdfView(u,host) }catch(e2){ host.textContent='No se pudo mostrar aquí el PDF ('+e2.message+'). Usa «Descargar PDF».' } }
+        try{ await repPdfView(u,host) }catch(e2){ host.textContent='No se pudo mostrar aquí el PDF ('+e2.message+'). Usa «Descargar este PDF».' } }
       catch(e){ say('No se pudo generar el PDF: '+e.message,'err') } finally{ busy(false) } };
     bs.onclick=async()=>{ const para=to.value.split(/[,;\s]+/).map(v=>v.trim()).filter(Boolean); if(!para.length||!para.every(v=>/^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(v))){ say('Escribe un correo de destinatario válido.','err'); to.focus(); return }
+      if(para.length>5){ say('Demasiados destinatarios ('+para.length+'). El máximo es 5.','err'); return }
       if(!su.value.trim()||!tx.value.trim()){ say('Faltan el asunto o el texto.','err'); return }
-      if(bs.dataset.ok!=='1'){ bs.dataset.ok='1'; bs.textContent='✉ Confirmar: enviar a '+para.join(', '); say('Pulsa otra vez para confirmar el envío a '+para.join(', ')+'.'); return }
-      busy(true); say('Enviando… (puede tardar si hay muchas fotos)');
-      const clave=nuevaClave(); /* una por intento confirmado; el doble clic lo impide el botón desactivado */
-      try{ const j=await repCall({...base(),accion:'enviar',para,copia:cc.checked?REP_COPIA:'',asunto:su.value.trim(),texto:tx.value.trim(),clave}); try{ localStorage.setItem(KEY2,para.join(', ')) }catch(e){}
-        say('Enviado a '+j.para.join(', ')+' · '+j.paginas+(j.paginas===1?' página, ':' páginas, ')+j.fotos+' fotos'+(cc.checked?' · copia a '+REP_COPIA:'')+'.','ok'); bs.textContent='✓ Enviado'; bv.disabled=false }
-      catch(e){ say('No se envió: '+e.message,'err'); bs.dataset.ok=''; bs.textContent='✉ Enviar ahora'; busy(false) } };
-    to.oninput=()=>{ if(bs.dataset.ok==='1'&&!bs.disabled){ bs.dataset.ok=''; bs.textContent='✉ Enviar ahora' } };
+      if(!prev){ say('Primero pulsa «Ver el PDF que se enviará» y revísalo: se envía exactamente ese archivo.','err'); return }
+      if(Date.now()>prev.caduca){ prev=null; pintaFotos(); const v=card.querySelector('.rpmv'); if(v) v.remove(); say('La vista previa ha caducado (30 minutos). Pulsa otra vez «Ver el PDF que se enviará», revísalo y vuelve a enviar.','err'); return }
+      if(bs.dataset.ok!=='1'&&!incierto){ bs.dataset.ok='1'; bs.textContent='✉ Confirmar: enviar a '+para.join(', '); say('Pulsa otra vez para confirmar el envío a '+para.join(', ')+(prev.fotos.faltan?'. Atención: en el PDF faltan '+prev.fotos.faltan+' fotos.':'.')); return }
+      busy(true); say('Enviando…');
+      try{ const j=await repCall({accion:'enviar',sello:prev.sello,pdf_b64:prev.b64,para,copia:cc.checked?REP_COPIA:'',asunto:su.value.trim(),texto:tx.value.trim()}); try{ localStorage.setItem(KEY2,para.join(', ')) }catch(e){}
+        incierto=false; say('Enviado a '+j.para.join(', ')+(cc.checked?' · copia a '+REP_COPIA:'')+' · adjunto '+j.archivo+' (huella '+j.sha256.slice(0,12)+'…).','ok'); bs.textContent='✓ Enviado'; bv.disabled=false; [to,su,tx,cc].forEach(i=>i.disabled=true) }
+      catch(e){ busy(false);
+        if(e.codigo==='RESULTADO_INCIERTO'||(!e.http&&!e.codigo)){ incierto=true; bs.dataset.ok='1'; bs.textContent='↻ Reintentar el mismo envío'; say('No se sabe si el correo ha salido: no llegó la respuesta. Pulsa «Reintentar el mismo envío» sin cambiar nada; si ya había salido, no se duplicará.','err') }
+        else if(e.codigo==='ENVIO_DESHABILITADO'){ bs.dataset.ok=''; bs.textContent='✉ Enviar ahora'; say('Versión de pruebas: el envío real está deshabilitado. El PDF y los datos del envío se han comprobado y son correctos (huella '+(e.j.sha256||'').slice(0,12)+'…).') }
+        else { if(e.http===409){ prev=null; pintaFotos(); const v=card.querySelector('.rpmv'); if(v) v.remove() } bs.dataset.ok=''; bs.textContent='✉ Enviar ahora'; say('No se envió: '+e.message,'err') } } };
+    to.oninput=su.oninput=tx.oninput=cc.onchange=reinicia; /* cualquier cambio en destinatario, asunto, texto o copia exige confirmar otra vez */
     box.append(card) });
   document.body.append(ov) }
 const eur2=v=>Number(v||0).toLocaleString('es-ES',{minimumFractionDigits:2,maximumFractionDigits:2})+' €';
@@ -711,7 +728,7 @@ function nwSummary(){
 
 /* ---------- arranque ---------- */
 function start(){ $('login').hidden=true; $('app').hidden=false; $('fab').hidden=false; load(); clearInterval(timer); timer=setInterval(()=>{ load(); liveLabel() },POLL) }
-function logout(){ clearSession(); clearInterval(timer); O=[]; prevRev={}; lastOk=0; $('app').hidden=true; $('login').hidden=false; $('fab').hidden=true; nwClose() }
+function logout(){ clearSession(); clearInterval(timer); O=[]; prevRev={}; lastOk=0; $('app').hidden=true; $('login').hidden=false; $('fab').hidden=true; nwClose(); repSendClose(); /* al salir se cierra la ventana del informe y se liberan sus archivos */ repSel=new Set(); repSelW=new Set(); repView=false; for(const k in MED) delete MED[k]; for(const k in MAT) delete MAT[k]; for(const k in THU){ try{ if(typeof THU[k]==='string'&&THU[k].startsWith('blob:')) URL.revokeObjectURL(THU[k]) }catch(e){} delete THU[k] } }
 $('lf').addEventListener('submit',async e=>{ e.preventDefault(); $('lerr').textContent=''; $('lb').disabled=true;
   try{ const em=$('le').value.trim().toLowerCase(); const j=await auth('token?grant_type=password',{email:em,password:$('lp').value});
     saveSession({access_token:j.access_token,refresh_token:j.refresh_token,expires_at:Date.now()+j.expires_in*1000,email:em},$('lr').checked); $('lp').value=''; start() }
