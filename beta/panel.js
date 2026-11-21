@@ -82,14 +82,14 @@ function repFmt(L,d0,d1,WK,QN,MS){ const PW=MS?'mes':QN?'quincena':'semana', DEL
   if(one){ doc.append(H('Cómo trabajamos cada aviso')); const st=el('div','rf-steps');
     ['Aviso de '+cname,'Orden en la app con el código del piso','Asignación de técnico y cita','Trabajo en el inmueble','Cierre con informe y fotos',help?'Aviso computado e informe al cliente':'Informe al cliente'].forEach((t,i)=>{ const d=el('div'); d.append(el('b',null,String(i+1)),el('span',null,t)); st.append(d) }); doc.append(st) }
   if(MS){ /* KPI del mes */
-    const inP=s=>s&&dayOf(s)>=d0&&dayOf(s)<=dc, mine=real().filter(o=>cls.includes(o.cl)), rec=mine.filter(o=>inP(o.ca)), can=rec.filter(o=>o.st==='cancelled'), opn=mine.filter(o=>!['completed','cancelled'].includes(o.st)&&dayOf(o.ca)<=dc);
+    const inP=s=>s&&dayOf(s)>=d0&&dayOf(s)<=dc, mine=real().filter(o=>cls.includes(o.cl)&&o.st!=='cancelled'), rec=mine.filter(o=>inP(o.ca)), /* las canceladas son gestión interna de AMJ: no entran en el informe del cliente */ opn=mine.filter(o=>!['completed','cancelled'].includes(o.st)&&dayOf(o.ca)<=dc);
     const hrs=(a,b)=>(new Date(b)-new Date(a))/36e5, avg=a=>a.length?a.reduce((x,y)=>x+y,0)/a.length:null, fH=h=>h===null?'—':(h<24?h.toFixed(1).replace('.',',')+' h':(h/24).toFixed(1).replace('.',',')+' días');
     const tA=avg(L.filter(o=>o.sa).map(o=>hrs(o.ca,o.sa))), tR=avg(L.map(o=>hrs(o.ca,o.fa))), tW=avg(L.filter(o=>o.min!=null).map(o=>o.min));
     const d24=L.filter(o=>hrs(o.ca,o.fa)<=24).length, d48=L.filter(o=>hrs(o.ca,o.fa)<=48).length, pct=(a,b)=>b?Math.round(a/b*100)+' %':'—';
     const nov=L.filter(o=>/SIN POSIBILIDAD DE EJECUCI/i.test(o.report)).length, byP={}; L.forEach(o=>{ const c=code(o); byP[c]=(byP[c]||0)+1 }); const rep2=Object.values(byP).filter(n=>n>1).length;
     const refs=new Set(L.map(o=>String(o.ref))), RVm=(RV||[]).filter(r=>refs.has(String(r.reference))), st=avg(RVm.map(r=>Number(r.stars)));
     doc.append(H('Indicadores del mes (KPI)')); const g=el('div','rf-kp rf-kpi'); const kk=(v,t)=>{ const d=el('div'); d.append(el('b',null,String(v)),el('span',null,t)); g.append(d) };
-    kk(rec.length,'órdenes recibidas'); kk(L.length,'órdenes finalizadas'); kk(can.length,'canceladas'); kk(opn.length,live?'abiertas a fecha de '+dm(dc):'abiertas al cierre del mes');
+    kk(rec.length,'órdenes recibidas'); kk(L.length,'órdenes finalizadas'); kk(opn.length,live?'abiertas a fecha de '+dm(dc):'abiertas al cierre del mes');
     kk(fH(tA),'tiempo medio de respuesta (del aviso al inicio del trabajo)'); kk(fH(tR),'tiempo medio de resolución (del aviso al cierre)'); kk(pct(d24,L.length),'resueltas en menos de 24 h'); kk(pct(d48,L.length),'resueltas en menos de 48 h');
     kk(tW===null?'—':dur(Math.round(tW)),'tiempo medio de trabajo en el inmueble'); kk(pisos,'inmuebles atendidos'); kk(rep2,'inmuebles con más de una orden'); kk(nov,'visitas sin posibilidad de ejecución');
     kk(pct(L.filter(o=>(MED[o.id]||[]).length).length,L.length),'órdenes con fotografías'); kk(pct(L.filter(o=>o.report).length,L.length),'órdenes con informe del técnico'); kk(mload?eur2(sumM(allM,'total')):'…','materiales, IVA incluido'); kk(st===null?'—':st.toFixed(1).replace('.',',')+' ★ ('+RVm.length+')','valoración media');
@@ -98,8 +98,8 @@ function repFmt(L,d0,d1,WK,QN,MS){ const PW=MS?'mes':QN?'quincena':'semana', DEL
     doc.append(g,el('p','rf-note','Tiempos calculados sobre las órdenes finalizadas en el mes, desde la creación de la orden en la app.'));
     /* gráficos, como en el panel KPI */
     const days={}; days[d0]={c:0,a:0,r:0,x:0}; days[dc]=days[dc]||{c:0,a:0,r:0,x:0}; const add=(s,k)=>{ if(inP(s)) (days[dayOf(s)]=days[dayOf(s)]||{c:0,a:0,r:0,x:0})[k]++ };
-    mine.forEach(o=>{ add(o.ca,'c'); add(o.sa,'a'); if(o.st==='completed') add(o.fa,'r'); if(o.st==='cancelled') add(o.ca,'x') });
-    const lc=lineChart('Flujo de órdenes del mes',days,[['c','Recibidas','#13385f'],['a','Atendidas (empezadas)','#1b8fd9'],['r','Resueltas','#16a36a'],['x','Canceladas','#d33']]); lc.classList.add('rf-ch'); doc.append(lc);
+    mine.forEach(o=>{ add(o.ca,'c'); add(o.sa,'a'); if(o.st==='completed') add(o.fa,'r') });
+    const lc=lineChart('Flujo de órdenes del mes',days,[['c','Recibidas','#13385f'],['a','Atendidas (empezadas)','#1b8fd9'],['r','Resueltas','#16a36a']]); lc.classList.add('rf-ch'); doc.append(lc);
     const cnt=(list,key)=>{ const m={}; list.forEach(o=>{ const k=key(o)||'—'; m[k]=(m[k]||0)+1 }); return Object.entries(m).sort((a,b)=>b[1]-a[1]) };
     const dg=el('div','rf-dn'); dg.append(donut('Por tipo de trabajo',cnt(rec,o=>o.sv)),donut('Por estado',cnt(rec,o=>(STATUS[o.st]||[o.st])[0])),donut('Por ciudad',cnt(rec,o=>cap1(o.loc)))); doc.append(dg);
     /* evolución por semana */
