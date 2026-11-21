@@ -56,24 +56,24 @@ function repThumb(m){ const a=el('a','rth'); a.href='#'; a.title=m.caption||''; 
 function repPhotos(o){ const L=MED[o.id]; const w=el('div','rph'); if(L===undefined){ w.append(el('span','muted','Cargando fotos…')); return w }
   if(!L.length){ w.append(el('span','muted','Sin fotos')); return w } L.forEach(m=>w.append(repThumb(m))); return w }
 /* Informes con el formato que AMJ envía al cliente (vista «Ver»). Diario: órdenes marcadas. Semanal: informe completo de la semana de un cliente. */
-function repFmt(L,d0,d1,WK,QN){ const PW=QN?'quincena':'semana';
+function repFmt(L,d0,d1,WK,QN,MS){ const PW=MS?'mes':QN?'quincena':'semana', DELA=MS?'del mes':'de la '+PW;
   const fd=(d,o)=>new Date(d+'T12:00:00').toLocaleDateString('es-ES',o), cap1=t=>t?t.charAt(0).toUpperCase()+t.slice(1).toLowerCase():'', dm=d=>fd(d,{day:'2-digit',month:'2-digit'});
   const cls=[...new Set(L.map(o=>o.cl))], one=cls.length===1, cname=cls.map(clName).join(' + '), city=[...new Set(L.map(o=>cap1(o.loc)).filter(Boolean))].join(' / ');
   const code=o=>(o.piso||o.ad||'—').replace(/^(ENSO|HELP)-/,''), dlong=fd(d1,{day:'numeric',month:'long',year:'numeric'});
-  const per=(QN?(d0.slice(8)==='01'?'1.ª':'2.ª')+' quincena de '+fd(d1,{month:'long'})+' · ':'')+(!WK?dlong:'del '+fd(d0,d0.slice(0,7)===d1.slice(0,7)?{day:'numeric'}:{day:'numeric',month:'long'})+' al '+dlong);
+  const per=MS?fd(d1,{month:'long',year:'numeric'}):(QN?(d0.slice(8)==='01'?'1.ª':'2.ª')+' quincena de '+fd(d1,{month:'long'})+' · ':'')+(!WK?dlong:'del '+fd(d0,d0.slice(0,7)===d1.slice(0,7)?{day:'numeric'}:{day:'numeric',month:'long'})+' al '+dlong);
   const dc=d1>todayStr()?todayStr():d1, live=WK&&dc<d1;
   const H=t=>el('h2','rf-h2',t), table=(heads,cl)=>{ const tb=el('table','rf-tb'+(cl?' '+cl:'')), hr=el('tr'); heads.forEach(h=>hr.append(el('th',null,h))); const th=el('thead'); th.append(hr); const bd=el('tbody'); tb.append(th,bd); return [tb,bd] };
   const row=(bd,cells,cl)=>{ const r=el('tr',cl||null); cells.forEach(c=>{ if(c instanceof Node) r.append(c); else r.append(el('td',null,c)) }); bd.append(r); return r };
   const td=(t,c)=>el('td',c||null,t);
   const doc=el('div','rf');
   const top=el('div','rf-top'); const lg=document.querySelector('.brand img'); if(lg){ const im=el('img'); im.src=lg.src; im.alt='AMJ'; top.append(im) }
-  const tr=el('div','rf-tr'); tr.append(el('b',null,(cname+(city?' · '+city:'')).toUpperCase()),el('span',null,WK?'Servicio '+dm(d0)+' – '+dm(d1)+' · '+d1.slice(0,4):'Informe diario · '+fd(d1,{day:'numeric',month:'short',year:'numeric'}))); top.append(tr); doc.append(top);
-  doc.append(el('h1','rf-h1',WK?'Informe de servicio':'Informe diario de servicio'),el('div','rf-sub',[cname,city,per].filter(Boolean).join(' · ')));
+  const tr=el('div','rf-tr'); tr.append(el('b',null,(cname+(city?' · '+city:'')).toUpperCase()),el('span',null,MS?'Informe mensual · '+per:WK?'Servicio '+dm(d0)+' – '+dm(d1)+' · '+d1.slice(0,4):'Informe diario · '+fd(d1,{day:'numeric',month:'short',year:'numeric'}))); top.append(tr); doc.append(top);
+  doc.append(el('h1','rf-h1',MS?'Informe mensual de servicio':WK?'Informe de servicio':'Informe diario de servicio'),el('div','rf-sub',[cname,city,per].filter(Boolean).join(' · ')));
   const pisos=new Set(L.map(o=>o.piso||o.ad)).size, loaded=L.every(o=>o.id in MED), mload=L.every(o=>o.id in MAT), nf=L.reduce((a,o)=>a+(MED[o.id]||[]).length,0);
   const sumM=(arr,f)=>arr.reduce((a,m)=>a+Number(m[f]||0),0), allM=L.flatMap(o=>MAT[o.id]||[]);
   const help=one&&cls[0]==='HELP', vkey=o=>(o.piso||o.ad)+'|'+dayOf(o.sa), m0=d1.slice(0,8)+'01';
   const hv=help?real().filter(o=>o.cl==='HELP'&&o.st!=='cancelled'&&o.sa&&dayOf(o.sa)>=m0&&dayOf(o.sa)<=d1):[], cupo=new Set(hv.map(vkey)).size;
-  const intro=el('p','rf-intro'); intro.append(el('b',null,L.length+(L.length===1?' orden de trabajo finalizada ':' órdenes de trabajo finalizadas ')+(WK?per.replace(/^.* · /,''):'el '+dlong)+'.'),document.createTextNode(' Se detallan las intervenciones por inmueble, el informe del técnico'+(WK?', las fotografías y los materiales declarados por los técnicos.':' y las fotografías de cada trabajo.'))); doc.append(intro);
+  const intro=el('p','rf-intro'); intro.append(el('b',null,L.length+(L.length===1?' orden de trabajo finalizada ':' órdenes de trabajo finalizadas ')+(MS?'en '+per:WK?per.replace(/^.* · /,''):'el '+dlong)+'.'),document.createTextNode(' Se detallan las intervenciones por inmueble, el informe del técnico'+(WK?', las fotografías y los materiales declarados por los técnicos.':' y las fotografías de cada trabajo.'))); doc.append(intro);
   if(live) doc.append(el('p','rf-live','Periodo en curso: datos hasta el '+dm(dc)+'. El periodo termina el '+dm(d1)+'.'));
   const box=el('div','rf-kp'); const k=(v,t)=>{ const d=el('div'); d.append(el('b',null,v),el('span',null,t)); box.append(d) };
   k(String(L.length),L.length===1?'orden finalizada':'órdenes finalizadas');
@@ -81,6 +81,28 @@ function repFmt(L,d0,d1,WK,QN){ const PW=QN?'quincena':'semana';
   if(WK) k(mload?eur2(sumM(allM,'total')):'…','materiales declarados, IVA incluido'); else k(loaded?String(nf):'…','fotografías'); doc.append(box);
   if(one){ doc.append(H('Cómo trabajamos cada aviso')); const st=el('div','rf-steps');
     ['Aviso de '+cname,'Orden en la app con el código del piso','Asignación de técnico y cita','Trabajo en el inmueble','Cierre con informe y fotos',help?'Aviso computado e informe al cliente':'Informe al cliente'].forEach((t,i)=>{ const d=el('div'); d.append(el('b',null,String(i+1)),el('span',null,t)); st.append(d) }); doc.append(st) }
+  if(MS){ /* KPI del mes */
+    const inP=s=>s&&dayOf(s)>=d0&&dayOf(s)<=dc, mine=real().filter(o=>cls.includes(o.cl)), rec=mine.filter(o=>inP(o.ca)), can=rec.filter(o=>o.st==='cancelled'), opn=mine.filter(o=>!['completed','cancelled'].includes(o.st)&&dayOf(o.ca)<=dc);
+    const hrs=(a,b)=>(new Date(b)-new Date(a))/36e5, avg=a=>a.length?a.reduce((x,y)=>x+y,0)/a.length:null, fH=h=>h===null?'—':(h<24?h.toFixed(1).replace('.',',')+' h':(h/24).toFixed(1).replace('.',',')+' días');
+    const tA=avg(L.filter(o=>o.sa).map(o=>hrs(o.ca,o.sa))), tR=avg(L.map(o=>hrs(o.ca,o.fa))), tW=avg(L.filter(o=>o.min!=null).map(o=>o.min));
+    const d24=L.filter(o=>hrs(o.ca,o.fa)<=24).length, d48=L.filter(o=>hrs(o.ca,o.fa)<=48).length, pct=(a,b)=>b?Math.round(a/b*100)+' %':'—';
+    const nov=L.filter(o=>/SIN POSIBILIDAD DE EJECUCI/i.test(o.report)).length, byP={}; L.forEach(o=>{ const c=code(o); byP[c]=(byP[c]||0)+1 }); const rep2=Object.values(byP).filter(n=>n>1).length;
+    const refs=new Set(L.map(o=>String(o.ref))), RVm=(RV||[]).filter(r=>refs.has(String(r.reference))), st=avg(RVm.map(r=>Number(r.stars)));
+    doc.append(H('Indicadores del mes (KPI)')); const g=el('div','rf-kp rf-kpi'); const kk=(v,t)=>{ const d=el('div'); d.append(el('b',null,String(v)),el('span',null,t)); g.append(d) };
+    kk(rec.length,'órdenes recibidas'); kk(L.length,'órdenes finalizadas'); kk(can.length,'canceladas'); kk(opn.length,live?'abiertas a fecha de '+dm(dc):'abiertas al cierre del mes');
+    kk(fH(tA),'tiempo medio de respuesta (del aviso al inicio del trabajo)'); kk(fH(tR),'tiempo medio de resolución (del aviso al cierre)'); kk(pct(d24,L.length),'resueltas en menos de 24 h'); kk(pct(d48,L.length),'resueltas en menos de 48 h');
+    kk(tW===null?'—':dur(Math.round(tW)),'tiempo medio de trabajo en el inmueble'); kk(pisos,'inmuebles atendidos'); kk(rep2,'inmuebles con más de una orden'); kk(nov,'visitas sin posibilidad de ejecución');
+    kk(pct(L.filter(o=>(MED[o.id]||[]).length).length,L.length),'órdenes con fotografías'); kk(pct(L.filter(o=>o.report).length,L.length),'órdenes con informe del técnico'); kk(mload?eur2(sumM(allM,'total')):'…','materiales, IVA incluido'); kk(st===null?'—':st.toFixed(1).replace('.',',')+' ★ ('+RVm.length+')','valoración media');
+    doc.append(g,el('p','rf-note','Tiempos calculados sobre las órdenes finalizadas en el mes, desde la creación de la orden en la app.'));
+    /* evolución por semana */
+    doc.append(H('Evolución por semana')); const [tw,bw]=table(['Semana','Recibidas','Finalizadas','Inmuebles','Materiales']); const addD=(d,n)=>{ const x=new Date(d+'T12:00:00'); x.setDate(x.getDate()+n); return x.toLocaleDateString('sv-SE') };
+    for(let a=d0;a<=dc;){ const wd=(new Date(a+'T12:00:00').getDay()+6)%7; let b=addD(a,6-wd); if(b>dc) b=dc; const F=L.filter(o=>dayOf(o.fa)>=a&&dayOf(o.fa)<=b);
+      row(bw,[dm(a)+' – '+dm(b),String(rec.filter(o=>dayOf(o.ca)>=a&&dayOf(o.ca)<=b).length),String(F.length),String(new Set(F.map(code)).size),mload?eur2(sumM(F.flatMap(o=>MAT[o.id]||[]),'total')):'…']); a=addD(b,1) }
+    row(bw,['Total',String(rec.length),String(L.length),String(pisos),mload?eur2(sumM(allM,'total')):'…'],'tot'); doc.append(tw);
+    /* valoraciones */
+    doc.append(H('Valoraciones del mes')); const [tv,bv]=table(['Orden / inmueble','Valoración','Comentario']); const byRef={}; L.forEach(o=>byRef[String(o.ref)]=o);
+    if(!RVm.length){ const e=td(RV?'No hay valoraciones de las órdenes de este mes.':'Cargando…'); e.colSpan=3; row(bv,[e]) }
+    RVm.forEach(r=>{ const o=byRef[String(r.reference)]; row(bv,[td('AMJ-'+r.reference+' · '+code(o),'nwr'),'★'.repeat(Number(r.stars))+'☆'.repeat(5-Number(r.stars)),r.comment||'—']) }); doc.append(tv) }
   if(WK&&L.length){ /* órdenes por inmueble y tipo de trabajo */
     doc.append(H('Órdenes por inmueble · '+per)); const cnt={}; L.forEach(o=>{ const c=code(o); cnt[c]=(cnt[c]||0)+1 }); const mx=Math.max(...Object.values(cnt)); const bars=el('div','rf-bars');
     Object.keys(cnt).sort().forEach(c=>{ const r=el('div'), bar=el('i'), f=el('u'); f.style.width=Math.round(cnt[c]/mx*100)+'%'; bar.append(f); r.append(el('span',null,c),bar,el('em',null,String(cnt[c]))); bars.append(r) }); doc.append(bars);
@@ -103,7 +125,7 @@ function repFmt(L,d0,d1,WK,QN){ const PW=QN?'quincena':'semana';
   if(L.length) doc.append(H('Fotos de las intervenciones'));
   L.forEach(o=>{ const g=el('div','rf-og'); g.append(el('div','rf-oh',(WK?dm(dayOf(o.fa))+' · ':'')+'AMJ-'+o.ref+' · '+(o.work||'').replace(/\.$/,'')+' · '+code(o))); const w=repPhotos(o); w.className='rf-ph'; g.append(w); doc.append(g) });
   if(WK){ /* materiales */
-    if(QN&&mload){ const withM=L.filter(o=>(MAT[o.id]||[]).length), tot=sumM(allM,'total'), oT=o=>sumM(MAT[o.id],'total');
+    if((QN||MS)&&mload){ const withM=L.filter(o=>(MAT[o.id]||[]).length), tot=sumM(allM,'total'), oT=o=>sumM(MAT[o.id],'total');
       doc.append(H('Informe de materiales')); const p=el('p','rf-intro'); p.append(el('b',null,eur2(tot)+' en materiales en '+withM.length+' de las '+L.length+' órdenes finalizadas.'),document.createTextNode(' Los materiales se repercuten al mismo precio de compra del técnico, sin recargo, con el IVA desglosado.')); doc.append(p);
       const bx=el('div','rf-kp'); const kk=(v,t)=>{ const d=el('div'); d.append(el('b',null,v),el('span',null,t)); bx.append(d) };
       kk(eur2(tot),'total materiales, IVA incluido (base '+eur2(sumM(allM,'subtotal'))+' · IVA '+eur2(sumM(allM,'iva'))+')'); kk(withM.length+' / '+L.length,'órdenes con materiales'+(L.length?' ('+Math.round(withM.length/L.length*100)+' %)':''));
@@ -115,14 +137,14 @@ function repFmt(L,d0,d1,WK,QN){ const PW=QN?'quincena':'semana';
         Object.keys(g).sort((x,y)=>g[y].t-g[x].t).forEach(k=>row(b5,[k,String(g[k].n),eur2(g[k].t)])); row(b5,['Total',String(withM.length),eur2(tot)],'tot'); doc.append(t5) } }
     doc.append(H('Relación detallada de materiales'),el('p','rf-intro','Cada línea corresponde a un material declarado por el técnico en la orden. Importes al precio de compra, sin recargo.'));
     const [t3,b3]=table(['Fecha','Orden / inmueble','Trabajo y material','Base','IVA','Total'],'mat'); const withM=L.filter(o=>(MAT[o.id]||[]).length);
-    if(!mload){ const e=td('Cargando materiales…'); e.colSpan=6; row(b3,[e]) } else if(!withM.length){ const e=td('Esta '+PW+' no se han declarado materiales.'); e.colSpan=6; row(b3,[e]) }
+    if(!mload){ const e=td('Cargando materiales…'); e.colSpan=6; row(b3,[e]) } else if(!withM.length){ const e=td((MS?'Este mes':'Esta '+PW)+' no se han declarado materiales.'); e.colSpan=6; row(b3,[e]) }
     withM.forEach(o=>{ const M=MAT[o.id]; M.forEach((m,i)=>{ const c=el('td'); if(!i) c.append(el('b',null,(o.work||'').replace(/\.$/,'')),el('br')); c.append(document.createTextNode((m.description||'—')+(Number(m.quantity||1)!==1?' × '+Number(m.quantity):'')));
         row(b3,[td(i?'':dm(dayOf(o.fa)),'nwr'),td(i?'':'AMJ-'+o.ref+' · '+code(o),'nwr'),c,td(eur2(m.subtotal),'r'),td(eur2(m.iva),'r'),td(eur2(m.total),'r')]) });
       if(M.length>1) row(b3,['','','Subtotal AMJ-'+o.ref,td(eur2(sumM(M,'subtotal')),'r'),td(eur2(sumM(M,'iva')),'r'),td(eur2(sumM(M,'total')),'r')],'sub') });
-    if(mload&&withM.length) row(b3,['','','Total de la '+PW,td(eur2(sumM(allM,'subtotal')),'r'),td(eur2(sumM(allM,'iva')),'r'),td(eur2(sumM(allM,'total')),'r')],'tot');
+    if(mload&&withM.length) row(b3,['','','Total '+DELA,td(eur2(sumM(allM,'subtotal')),'r'),td(eur2(sumM(allM,'iva')),'r'),td(eur2(sumM(allM,'total')),'r')],'tot');
     doc.append(t3);
     const open=real().filter(o=>!['completed','cancelled'].includes(o.st)&&cls.includes(o.cl)&&dayOf(o.ca)<=d1);
-    if(open.length){ doc.append(H(live?'Órdenes abiertas a fecha de '+dm(dc):'Órdenes abiertas al cierre de la '+PW)); const [t4,b4]=table(['Orden / inmueble','Trabajo','Estado']); open.forEach(o=>row(b4,[td('AMJ-'+o.ref+' · '+code(o),'nwr'),o.work,(STATUS[o.st]||[o.st])[0]])); doc.append(t4) } }
+    if(open.length){ doc.append(H(live?'Órdenes abiertas a fecha de '+dm(dc):'Órdenes abiertas al cierre '+DELA)); const [t4,b4]=table(['Orden / inmueble','Trabajo','Estado']); open.forEach(o=>row(b4,[td('AMJ-'+o.ref+' · '+code(o),'nwr'),o.work,(STATUS[o.st]||[o.st])[0]])); doc.append(t4) } }
   const ft=el('div','rf-ft'); ft.append(el('span',null,'amjmaintenance.es · Informe para '+cname),el('span',null,'ASSET MAINTENANCE · JUST IN TIME')); doc.append(ft);
   return doc }
 const eur2=v=>Number(v||0).toLocaleString('es-ES',{minimumFractionDigits:2,maximumFractionDigits:2})+' €';
@@ -362,15 +384,15 @@ const SECS={
      card('Órdenes con materiales pendientes de AMJ',['Orden','Técnico','Terminada','Motivo'],od.map(x=>['AMJ-'+x.reference,x.technician||'—',fmtD(x.finished_at),({NO_RECEIPT:'Sin ticket',NO_QUOTE:'Sin presupuesto de materiales',EXCEEDS_QUOTE:'Ticket supera lo presupuestado',RECEIPTS_PENDING:'Ticket por revisar'})[(x.materials_state||{}).reason]||(x.materials_state||{}).reason||'—']),'No hay órdenes pendientes.'),
      card('Histórico de tickets (60 días)',['Orden','Técnico','Proveedor','Fecha ticket','Total ticket','Aceptado','Estado'],(RH||[]).map(r=>['AMJ-'+r.reference,r.technician||'—',r.vendor_name||'—',r.receipt_date?fmtD(r.receipt_date):'—',r.total!=null?eur(r.total):'—',r.accepted_total!=null?eur(r.accepted_total):'—',badge(({approved:'Aprobado',validated:'Validado',rejected:'Rechazado',withdrawn:'Retirado',pending_review:'Por revisar'})[r.status]||r.status,r.status==='approved'||r.status==='validated'?'ok':(r.status==='pending_review'?'s-pending':'no'))]),RH?'No hay tickets en los últimos 60 días.':'Cargando…')] }],
  informes:['Informes',()=>{ if(!repDay) repDay=todayStr();
-   const QN=repPer==='qui', WK=repPer==='sem'||QN, PW=QN?'quincena':'semana';
+   const MS=repPer==='mes', QN=repPer==='qui', WK=repPer==='sem'||QN||MS, PW=MS?'mes':QN?'quincena':'semana', DELA=MS?'del mes':'de la '+PW, ADJ=MS?'mensual':QN?'quincenal':'semanal';
    const ctl=el('div','repctl');
-   const seg=el('div','seg'); [['dia','Diario'],['sem','Semanal'],['qui','Quincenal'],['mes','Mensual'],['tot','Total']].forEach(([k,t])=>{ const on=k==='dia'||k==='sem'||k==='qui'; const b=el('button',repPer===k?'on':null,t+(on?'':' · por definir')); b.disabled=!on; b.onclick=()=>{ repPer=k; renderSec() }; seg.append(b) });
+   const seg=el('div','seg'); [['dia','Diario'],['sem','Semanal'],['qui','Quincenal'],['mes','Mensual'],['tot','Total']].forEach(([k,t])=>{ const on=k!=='tot'; const b=el('button',repPer===k?'on':null,t+(on?'':' · por definir')); b.disabled=!on; b.onclick=()=>{ repPer=k; renderSec() }; seg.append(b) });
    const scl=el('select'); scl.append(new Option('Todos los clientes',''));
    [...new Set(real().map(o=>o.cl))].sort((x,y)=>clName(x).localeCompare(clName(y))).forEach(c=>scl.append(new Option(clName(c),c))); scl.value=repCl; scl.onchange=()=>{ repCl=scl.value; renderSec() };
    const dIn=el('input'); dIn.type='date'; dIn.value=repDay; dIn.max=todayStr(); dIn.onchange=()=>{ if(dIn.value){ repDay=dIn.value; renderSec() } };
    const addD=(d,n)=>{ const x=new Date(d+'T12:00:00'); x.setDate(x.getDate()+n); return x.toLocaleDateString('sv-SE') };
-   const mv=n=>{ let v=addD(repDay,n); if(QN){ const dd=+repDay.slice(8), a=repDay.slice(0,8); v=n<0?addD(a+(dd<=15?'01':'16'),-1):(dd<=15?a+'16':addD(a+'28',4).slice(0,8)+'01') } if(v<=todayStr()||n<0){ repDay=v>todayStr()?todayStr():v; renderSec() } };
-   const st=WK?7:1, prev=el('button','out',QN?'◀ Quincena anterior':WK?'◀ Semana anterior':'◀ Día anterior'), next=el('button','out',QN?'Quincena siguiente ▶':WK?'Semana siguiente ▶':'Día siguiente ▶'); prev.onclick=()=>mv(-st); next.onclick=()=>mv(st); prev.style.marginLeft=next.style.marginLeft='0';
+   const mv=n=>{ let v=addD(repDay,n); if(MS){ const a=repDay.slice(0,8); v=n<0?addD(a+'01',-1).slice(0,8)+'01':addD(a+'28',4).slice(0,8)+'01'; if(v.slice(0,7)===todayStr().slice(0,7)) v=todayStr() } if(QN){ const dd=+repDay.slice(8), a=repDay.slice(0,8); v=n<0?addD(a+(dd<=15?'01':'16'),-1):(dd<=15?a+'16':addD(a+'28',4).slice(0,8)+'01') } if(v<=todayStr()||n<0){ repDay=v>todayStr()?todayStr():v; renderSec() } };
+   const st=WK?7:1, prev=el('button','out',MS?'◀ Mes anterior':QN?'◀ Quincena anterior':WK?'◀ Semana anterior':'◀ Día anterior'), next=el('button','out',MS?'Mes siguiente ▶':QN?'Quincena siguiente ▶':WK?'Semana siguiente ▶':'Día siguiente ▶'); prev.onclick=()=>mv(-st); next.onclick=()=>mv(st); prev.style.marginLeft=next.style.marginLeft='0';
    const pr=el('button','out','🖨 Imprimir / PDF'); pr.onclick=()=>window.print();
    const bVer=el('button','out'), bEnv=el('button','out'), bBack=el('button','out','◀ Volver a seleccionar'); bVer.style.marginLeft=bEnv.style.marginLeft=bBack.style.marginLeft='0';
    let selN=()=>0; const updSel=()=>{ const n=selN(); bVer.textContent='👁 Ver ('+n+')'; bEnv.textContent='✉ Enviar por email ('+n+')'; bVer.disabled=bEnv.disabled=!n };
@@ -379,9 +401,10 @@ const SECS={
    const row=el('div','repbar'); if(repView) row.append(bBack,bEnv,pr); else row.append(scl,prev,dIn,next,bVer,bEnv); ctl.append(seg,row); if(repMsg) ctl.append(el('div','repmsg',repMsg));
    /* periodo */
    let d0=repDay, d1=repDay; if(WK){ const wd=(new Date(repDay+'T12:00:00').getDay()+6)%7; d0=addD(repDay,-wd); d1=addD(d0,6) }
+   if(MS){ const a=repDay.slice(0,8); d0=a+'01'; d1=addD(addD(a+'28',4).slice(0,8)+'01',-1) }
    if(QN){ const a=repDay.slice(0,8); if(+repDay.slice(8)<=15){ d0=a+'01'; d1=a+'15' } else { d0=a+'16'; d1=addD(addD(a+'28',4).slice(0,8)+'01',-1) } }
    const fd=(d,o)=>new Date(d+'T12:00:00').toLocaleDateString('es-ES',o);
-   const per=WK?((QN?(d0.slice(8)==='01'?'1.ª':'2.ª')+' quincena · del ':'Semana del ')+fd(d0,{day:'numeric',month:'long'})+' al '+fd(d1,{day:'numeric',month:'long',year:'numeric'})):(()=>{ const f=fd(repDay,{weekday:'long',day:'numeric',month:'long',year:'numeric'}); return f.charAt(0).toUpperCase()+f.slice(1) })();
+   const per=MS?(m=>m.charAt(0).toUpperCase()+m.slice(1))(fd(d1,{month:'long',year:'numeric'})):WK?((QN?(d0.slice(8)==='01'?'1.ª':'2.ª')+' quincena · del ':'Semana del ')+fd(d0,{day:'numeric',month:'long'})+' al '+fd(d1,{day:'numeric',month:'long',year:'numeric'})):(()=>{ const f=fd(repDay,{weekday:'long',day:'numeric',month:'long',year:'numeric'}); return f.charAt(0).toUpperCase()+f.slice(1) })();
    const LA=real().filter(o=>o.st==='completed'&&dayOf(o.fa)>=d0&&dayOf(o.fa)<=d1&&(!repCl||o.cl===repCl)).sort((x,y)=>new Date(x.fa)-new Date(y.fa)||x.ref-y.ref);
    const wcl=[...new Set(LA.map(o=>o.cl))].sort((x,y)=>clName(x).localeCompare(clName(y)));
    selN=()=>WK?wcl.filter(c=>repSelW.has(c)).length:LA.filter(o=>repSel.has(o.id)).length;
@@ -389,14 +412,14 @@ const SECS={
    const L=repView?LA.filter(o=>repSel.has(o.id)):LA, SEL=!repView; updSel();
    const wrap=docs=>{ const w=el('div','repdoc rfw'); docs.forEach(d=>w.append(d)); return w };
    if(WK){ repEnsure(LA.map(o=>o.id));
-     if(repView) return [ctl,src('Así lo verá el cliente: el informe completo de la '+PW+'.'),wrap(wcl.filter(c=>repSelW.has(c)).map(c=>repFmt(LA.filter(o=>o.cl===c),d0,d1,true,QN)))];
-     const card=el('div','repdoc'); card.append(el('h3','reph3','Informe '+(QN?'quincenal':'semanal')+' · '+per));
+     if(repView) return [ctl,src('Así lo verá el cliente: el informe completo '+DELA+'.'),wrap(wcl.filter(c=>repSelW.has(c)).map(c=>repFmt(LA.filter(o=>o.cl===c),d0,d1,true,QN,MS)))];
+     const card=el('div','repdoc'); card.append(el('h3','reph3','Informe '+ADJ+' · '+per));
      const tb=el('table','reptb sel wk'), hr=el('tr'); ['','Cliente','Órdenes finalizadas','Inmuebles','Materiales con IVA'].forEach((h,i)=>hr.append(el('th',i?null:'ck',h))); const th=el('thead'); th.append(hr); const bd=el('tbody');
-     if(!wcl.length){ const r=el('tr'), e=el('td','empty','No hay órdenes terminadas esta '+PW+'.'); e.colSpan=5; r.append(e); bd.append(r) }
+     if(!wcl.length){ const r=el('tr'), e=el('td','empty','No hay órdenes terminadas '+(MS?'este mes':'esta '+PW)+'.'); e.colSpan=5; r.append(e); bd.append(r) }
      wcl.forEach(c=>{ const G=LA.filter(o=>o.cl===c), r=el('tr'), k=el('td','ck'), ck=el('input'); ck.type='checkbox'; ck.checked=repSelW.has(c); ck.onchange=()=>{ ck.checked?repSelW.add(c):repSelW.delete(c); updSel() }; k.append(ck);
        r.append(k,el('td','b',clName(c)),el('td',null,String(G.length)),el('td',null,String(new Set(G.map(o=>o.piso||o.ad)).size)),el('td',null,G.every(o=>o.id in MAT)?eur2(G.reduce((a,o)=>a+MAT[o.id].reduce((x,m)=>x+Number(m.total||0),0),0)):'…')); bd.append(r) });
      tb.append(th,bd); card.append(tb);
-     return [ctl,src('Informe '+(QN?'quincenal':'semanal')+' completo de cada cliente, con todos los trabajos de la '+PW+'. Marca la casilla del cliente y pulsa «Ver» para verlo como lo recibirá, o «Enviar por email».'),card] }
+     return [ctl,src('Informe '+ADJ+' completo de cada cliente, con todos los trabajos '+DELA+(MS?' y sus KPI':'')+'. Marca la casilla del cliente y pulsa «Ver» para verlo como lo recibirá, o «Enviar por email».'),card] }
    if(repView){ repEnsure(L.map(o=>o.id)); const cs=new Set(L.map(o=>o.cl)); const out=[ctl]; if(cs.size>1) out.push(el('div','repmsg','Has marcado órdenes de '+cs.size+' clientes distintos: para enviar, marca solo las de un cliente.')); out.push(src('Así lo verá el cliente: solo las órdenes que has marcado.'),wrap([repFmt(L,repDay,repDay,false)])); return out }
    repEnsure(L.map(o=>o.id));
    const doc=el('div','repdoc'); const hd=el('div','rephd'); const lg=document.querySelector('.brand img'); if(lg){ const im=el('img'); im.src=lg.src; im.alt='AMJ'; hd.append(im) }
