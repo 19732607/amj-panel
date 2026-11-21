@@ -365,8 +365,8 @@ function nwForm(){
   /* recuadro editable para que el clic derecho muestre «Pegar»; no deja escribir texto */
   zone.contentEditable='true'; [zt,pb,pp,zm].forEach(x=>x.contentEditable='false');
   zone.addEventListener('beforeinput',e=>e.preventDefault()); zone.addEventListener('drop',e=>e.preventDefault());
-  zone.append(zt,pb,pp,zm); g.append(zone,fi);
-  const thumbs=el('div','thumbs'); g.append(thumbs);
+  const thumbs=el('div','thumbs'); thumbs.contentEditable='false';
+  zone.append(zt,pb,pp,zm,thumbs); g.append(zone,fi);
   function addFiles(files,why){ let n=0; [...files].filter(f=>f&&/^image\//.test(f.type)).forEach(f=>{ if(NW.photos.length>=20) return; NW.photos.push({f,url:URL.createObjectURL(f)}); n++ }); drawThumbs();
     zm.textContent=n?('✔ '+(n===1?'Foto añadida':n+' fotos añadidas')+'. Llevas '+NW.photos.length+' de 20.'+(NW.photos.length<20?' Puedes pegar otra.':' Has llegado al máximo.')):(NW.photos.length>=20?'Has llegado al máximo de 20 fotos.':(why||'Lo que has pegado no es una foto. Copia la imagen (no el texto) y vuelve a pegar.')) }
   NW.addFiles=addFiles;
