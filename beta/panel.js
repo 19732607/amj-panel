@@ -336,8 +336,8 @@ function nwForm(){
   const sc=el('select'); sc.append(new Option('Elige cliente','')); clients.forEach(c=>sc.append(new Option(clName(c),c))); sc.append(new Option('Otro cliente / particular','OTRO'));
   const sci=el('select'); sci.append(new Option('Todas las ciudades',''));
   g.append(nwField('Cliente',sc),nwField('Ciudad',sci));
-  const pi=el('input'); pi.placeholder='Escribe el código o la calle'; pi.setAttribute('list','nwpl'); const dl=el('datalist'); dl.id='nwpl';
-  const pw=nwField('Piso',pi,true); pw.append(dl); g.append(pw);
+  const pi=el('input'); pi.placeholder='Escribe el código o la calle'; pi.autocomplete='off'; const pk=el('div','pk'), dl=el('div','sug'); dl.hidden=true; pk.append(pi,dl);
+  const pw=nwField('Piso',pk,true); g.append(pw);
   const ad=el('input'); ad.placeholder='Dirección completa'; const adci=el('input'); adci.placeholder='Ciudad';
   const adw=nwField('Dirección (otro cliente)',ad,true), adcw=nwField('Ciudad (otro cliente)',adci); adw.hidden=adcw.hidden=true; g.append(adw,adcw);
   const info=el('div','pinfo'); info.hidden=true; g.append(info);
@@ -345,7 +345,7 @@ function nwForm(){
   /* 2. Trabajo */
   g.append(el('div','nwh3','2 · Trabajo'));
   const sv=el('select'); sv.append(new Option('Elige servicio',''));
-  [...new Set(['Fontanería','Electricidad','Pintura','Climatización','Cerrajería','Reparación general'].concat(real().map(o=>o.sv).filter(Boolean)))].sort((a,b)=>a.localeCompare(b)).forEach(x=>sv.append(new Option(x,x)));
+  [...new Set(['Fontanería','Electricidad','Pintura','Climatización','Cerrajería','Reparación general','Presupuesto trabajos especializados'].concat(real().map(o=>o.sv).filter(Boolean)))].sort((a,b)=>a.localeCompare(b)).forEach(x=>sv.append(new Option(x,x)));
   const urg=el('select'); ['Normal','Urgente'].forEach(x=>urg.append(new Option(x,x)));
   const ds=el('textarea'); ds.placeholder='Qué hay que hacer (lo verá el técnico en la app)';
   const fd=el('input'); fd.type='date'; fd.value=todayStr(); const ft=el('input'); ft.type='time';
@@ -353,6 +353,23 @@ function nwForm(){
   const ac=el('input'); ac.placeholder='Llaves, portero, código… (opcional)';
   g.append(nwField('Servicio',sv),nwField('Prioridad',urg),nwField('Descripción',ds,true),nwField('Fecha preferida',fd),nwField('Hora preferida',ft),
     nwField('Persona de contacto',cn),nwField('Teléfono de contacto',ph),nwField('Acceso al piso',ac,true));
+  /* Fotos */
+  g.append(el('div','nwh3','Fotos'));
+  NW.photos=NW.photos||[]; NW.photos=[];
+  const zone=el('div','ph'); zone.tabIndex=0; zone.contentEditable='true';
+  const zt=el('div',null,'Copia una foto en otra app (WhatsApp, galería, correo…) y pégala aquí con Ctrl + V. En el móvil: mantén pulsado aquí y elige «Pegar». También puedes arrastrarla.');
+  const fi=el('input'); fi.type='file'; fi.accept='image/*'; fi.multiple=true; fi.hidden=true;
+  const pb=el('button','pb','📷 Añadir fotos'); pb.type='button'; pb.contentEditable='false'; pb.onclick=e=>{ e.preventDefault(); fi.click() };
+  zt.contentEditable='false'; zone.append(zt,pb); g.append(zone,fi);
+  const thumbs=el('div','thumbs'); g.append(thumbs);
+  function addFiles(files){ [...files].filter(f=>/^image\//.test(f.type)).forEach(f=>{ if(NW.photos.length>=20) return; const url=URL.createObjectURL(f); NW.photos.push({f,url}) }); drawThumbs() }
+  function drawThumbs(){ thumbs.innerHTML=''; NW.photos.forEach((ph,i)=>{ const t=el('div','th'), im=el('img'); im.src=ph.url; const x=el('button',null,'×'); x.type='button'; x.onclick=()=>{ URL.revokeObjectURL(ph.url); NW.photos.splice(i,1); drawThumbs() }; t.append(im,x); thumbs.append(t) }) }
+  fi.onchange=()=>{ addFiles(fi.files); fi.value='' };
+  zone.addEventListener('beforeinput',e=>{ if(e.inputType!=='insertFromPaste') e.preventDefault() });
+  zone.onpaste=e=>{ e.preventDefault(); const it=[...(e.clipboardData&&e.clipboardData.items||[])].filter(x=>x.kind==='file').map(x=>x.getAsFile()).filter(Boolean); if(it.length) addFiles(it); else zt.textContent='Lo que has pegado no es una foto. Copia la imagen (no el texto) y vuelve a pegar.' };
+  zone.ondragover=e=>{ e.preventDefault(); zone.classList.add('drag') }; zone.ondragleave=()=>zone.classList.remove('drag');
+  zone.ondrop=e=>{ e.preventDefault(); zone.classList.remove('drag'); addFiles(e.dataTransfer.files) };
+  $('nw').onpaste=e=>{ if(e.target===zone||zone.contains(e.target)) return; const it=[...(e.clipboardData&&e.clipboardData.items||[])].filter(x=>x.kind==='file').map(x=>x.getAsFile()).filter(Boolean); if(it.length){ e.preventDefault(); addFiles(it) } };
   /* 3. Técnico */
   g.append(el('div','nwh3','3 · Técnico'));
   const ck=el('input'); ck.type='checkbox'; const ckl=el('label','chk'); ckl.append(ck,document.createTextNode(' Asignar ya a un técnico')); g.append(ckl);
@@ -361,7 +378,11 @@ function nwForm(){
   let sel=null;
   const curCity=()=>sc.value==='OTRO'?nwCity(adci.value):(sel?sel.ci:sci.value);
   function fillCities(){ const cs=[...new Set(props.filter(p=>!sc.value||p.cl===sc.value).map(p=>p.ci))].sort(); sci.innerHTML=''; sci.append(new Option('Todas las ciudades','')); cs.forEach(c=>sci.append(new Option(c,c))) }
-  function fillPisos(){ dl.innerHTML=''; props.filter(p=>(!sc.value||p.cl===sc.value)&&(!sci.value||p.ci===sci.value)).forEach(p=>dl.append(new Option(p.code+' — '+p.ad+' ('+p.ci+')'))) }
+  function fillPisos(){ dl.innerHTML=''; const q=pi.value.trim().toLowerCase();
+    const L=props.filter(p=>(!sc.value||p.cl===sc.value)&&(!sci.value||p.ci===sci.value)&&(!q||sel&&pi.value===sel.code+' — '+sel.ad||(p.code+' '+p.ad).toLowerCase().includes(q)));
+    if(!L.length){ dl.append(el('i',null,'Ningún piso coincide')); return }
+    L.forEach(p=>{ const it=el('div'); it.append(el('b',null,(clName(p.cl))+' · '+p.code),document.createTextNode(' — '+p.ad+' '),el('i',null,'('+p.ci+')'));
+      it.onmousedown=e=>{ e.preventDefault(); pi.value=p.code+' — '+p.ad; dl.hidden=true; showPiso() }; dl.append(it) }) }
   function fillTecs(){ const ci=curCity(); st.innerHTML=''; st.append(new Option('Elige técnico',''));
     const cities={}; real().forEach(o=>{ if(o.tid&&o.loc) (cities[o.tid]=cities[o.tid]||new Set()).add(nwCity(o.loc)) });
     const list=(T||[]).filter(t=>!/prueba|NO ASIGNAR|revisi/i.test(t.name||''));
@@ -371,7 +392,7 @@ function nwForm(){
     if(rest.length){ const og=el('optgroup'); og.label=here.length?'Otras ciudades':(ci?'Sin trabajos aún en '+ci:'Todos los técnicos'); rest.forEach(t=>og.append(new Option(lab(t),t.id))); st.append(og) } }
   function showPiso(){ const v=pi.value.split(' — ')[0].trim().toUpperCase(); sel=props.find(p=>p.code.toUpperCase()===v)||null;
     info.innerHTML=''; info.hidden=!sel; dup.textContent='';
-    if(sel){ [['Código',sel.code],['Dirección',sel.ad],['Ciudad',sel.ci]].forEach(([k,v])=>{ const d=el('div'); d.append(el('span',null,k),document.createTextNode(v)); info.append(d) });
+    if(sel){ [['Cliente · código',clName(sel.cl)+' · '+sel.code,1],['Dirección',sel.ad],['Ciudad',sel.ci]].forEach(([k,v,bold])=>{ const d=el('div'); d.append(el('span',null,k),bold?el('b',null,v):document.createTextNode(v)); info.append(d) });
       const open=real().filter(o=>o.piso.toUpperCase()===sel.code.toUpperCase()&&!['completed','cancelled'].includes(o.st));
       if(open.length) dup.textContent='Atención: este piso ya tiene '+open.length+' orden(es) abierta(s): '+open.map(o=>'AMJ-'+o.ref+' ('+(STATUS[o.st]||[o.st])[0]+')').join(', ')+'. Revisa que no sea un duplicado.' }
     fillTecs(); check() }
@@ -379,7 +400,7 @@ function nwForm(){
     go.disabled=!(okP&&sv.value&&ds.value.trim()&&okT); go.textContent=ck.checked?'Crear y asignar':'Crear sin asignar' }
   sc.onchange=()=>{ const o=sc.value==='OTRO'; adw.hidden=adcw.hidden=!o; pw.hidden=!o?false:true; sci.parentNode.hidden=o; pi.value=''; fillCities(); fillPisos(); showPiso() };
   sci.onchange=()=>{ pi.value=''; fillPisos(); showPiso() };
-  pi.oninput=showPiso; adci.oninput=()=>{ fillTecs(); check() }; ad.oninput=check;
+  pi.oninput=()=>{ dl.hidden=false; fillPisos(); showPiso() }; pi.onfocus=()=>{ fillPisos(); dl.hidden=false }; pi.onblur=()=>setTimeout(()=>{ dl.hidden=true },150); adci.oninput=()=>{ fillTecs(); check() }; ad.oninput=check;
   ck.onchange=()=>{ stw.hidden=stn.hidden=!ck.checked; fillTecs(); check() };
   [sv,ds,st].forEach(x=>{ x.oninput=check; x.onchange=check });
   const cancel=el('button',null,'Cancelar'); cancel.onclick=nwClose;
@@ -387,21 +408,22 @@ function nwForm(){
   go.onclick=()=>{ const tec=ck.checked?(T||[]).find(t=>t.id===st.value):null;
     NW.data={cl:sc.value==='OTRO'?'Otro cliente':clName(sc.value),piso:sel?sel.code:'',ad:sel?sel.ad:ad.value.trim(),ci:sel?sel.ci:nwCity(adci.value),sv:sv.value,urg:urg.value,ds:ds.value.trim(),fd:fd.value,ft:ft.value,cn:cn.value.trim(),ph:ph.value.trim(),ac:ac.value.trim(),tec};
     nwSummary() };
-  f.append(cancel,go); fillCities(); fillPisos(); check();
+  f.append(cancel,go); NW.form=g; NW.foot=[cancel,go]; fillCities(); fillPisos(); check();
 }
 function nwSummary(){
-  const d=NW.data, b=$('nwbody'), f=$('nwfoot'); b.innerHTML=''; f.innerHTML='';
-  const g=el('div','nwc'); b.append(g); g.append(el('div','nwh3','Revisa la orden antes de enviarla'));
-  const sm=el('div','sum'); const line=(k,v)=>{ if(!v) return; const r=el('div'); r.append(el('b',null,k+': '),document.createTextNode(v)); sm.append(r) };
-  line('Cliente',d.cl); line('Piso',d.piso); line('Dirección',d.ad); line('Ciudad',d.ci); line('Servicio',d.sv+(d.urg==='Urgente'?' · URGENTE':'')); line('Descripción',d.ds);
+  const d=NW.data, b=$('nwbody'), f=$('nwfoot'); NW.form.hidden=true; NW.foot.forEach(x=>x.hidden=true);
+  const g=el('div','nwc'); b.append(g); const mine=[g]; g.append(el('div','nwh3','Revisa la orden antes de enviarla'));
+  const sm=el('div','sum'); const line=(k,v,strong)=>{ if(!v) return; const r=el('div'); r.append(el('b',null,k+': '),strong?el('b',null,v):document.createTextNode(v)); sm.append(r) };
+  line('Cliente · piso',d.cl+(d.piso?' · '+d.piso:''),1); line('Dirección',d.ad); line('Ciudad',d.ci); line('Servicio',d.sv+(d.urg==='Urgente'?' · URGENTE':'')); line('Descripción',d.ds);
   line('Fecha y hora preferidas',(d.fd?d.fd.split('-').reverse().join('/'):'')+(d.ft?' a las '+d.ft:'')); line('Contacto',[d.cn,d.ph].filter(Boolean).join(' · ')); line('Acceso',d.ac);
   line('Técnico',d.tec?d.tec.name+' (le llegará la orden a la app)':'Sin asignar: quedará «Pendiente de asignar»'); g.append(sm);
-  const back=el('button',null,'← Corregir'); back.onclick=nwForm;
+  if(NW.photos.length){ sm.append(el('div',null,'Fotos: '+NW.photos.length)); const th=el('div','thumbs'); NW.photos.forEach(ph=>{ const t=el('div','th'), im=el('img'); im.src=ph.url; t.append(im); th.append(t) }); g.append(th) }
+  const back=el('button',null,'← Corregir'); back.onclick=()=>{ mine.forEach(x=>x.remove()); NW.form.hidden=false; NW.foot.forEach(x=>x.hidden=false) };
   const go=el('button','go',d.tec?'Confirmar y enviar a '+d.tec.name.split(' ')[0]:'Confirmar y crear');
   go.onclick=()=>{ b.innerHTML=''; f.innerHTML=''; const g2=el('div','nwc'); b.append(g2);
     g2.append(el('div','sum','✔ MAQUETA: así terminaría. En la versión conectada aquí verías «AMJ-nnn creada'+(d.tec?' y enviada a '+d.tec.name:'')+'», la orden aparecería en la lista en menos de 15 segundos'+(d.tec?' y al técnico le llegaría el aviso a la app.':'.')+' Ahora no se ha enviado nada.'));
     const c=el('button','go','Cerrar'); c.onclick=nwClose; const n=el('button',null,'Otra orden'); n.onclick=nwForm; f.append(n,c) };
-  f.append(back,go);
+  mine.push(back,go); f.append(back,go);
 }
 
 /* ---------- arranque ---------- */
