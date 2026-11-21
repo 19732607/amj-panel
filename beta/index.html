@@ -75,6 +75,19 @@ tr.flash td{animation:fl 2.5s}@keyframes fl{0%{background:#fff3b8}100%{backgroun
 .nav .soon:empty{display:none}#alertn{background:#b42323;color:#fff;border-radius:9px;padding:1px 7px;font-weight:700}
 @media(max-width:700px){table{min-width:0}th:nth-child(n+4),td:nth-child(n+4){display:none}.filters select{flex:1;min-width:40%}}
 @media(max-width:900px){.side{display:none}.views{display:none}.main{padding:12px}}
+.fab{position:fixed;right:22px;bottom:22px;z-index:4;background:var(--cyan);color:#fff;border:0;border-radius:28px;padding:14px 20px;font:inherit;font-weight:700;font-size:15px;box-shadow:0 6px 20px rgba(0,0,0,.2);cursor:pointer}
+.nw{position:fixed;inset:0;background:rgba(10,25,45,.45);z-index:6;display:flex;align-items:flex-start;justify-content:center;overflow:auto;padding:24px 12px}.nw[hidden]{display:none}
+.nwb{background:#fff;border-radius:14px;width:min(760px,100%);box-shadow:0 12px 40px rgba(0,0,0,.25)}.nwh{background:var(--navy);color:#fff;padding:16px 18px;border-radius:14px 14px 0 0;display:flex;align-items:center;gap:10px}.nwh b{font-size:17px}.nwh .x{margin-left:auto;width:34px;height:34px;border:0;border-radius:50%;background:rgba(255,255,255,.15);color:#fff;font-size:20px;cursor:pointer}
+.mq{background:var(--amber);color:var(--amberT);font-size:12.5px;padding:8px 18px;font-weight:600}
+.nwc{padding:16px 18px;display:grid;grid-template-columns:1fr 1fr;gap:12px 14px}.nwc .full{grid-column:1/-1}.nwc label{display:flex;flex-direction:column;gap:5px;font-size:12.5px;color:var(--muted);font-weight:600}
+.nwc input,.nwc select,.nwc textarea{border:1px solid var(--line);border-radius:9px;padding:10px;font:inherit;font-weight:400;color:var(--txt)}.nwc textarea{min-height:70px;resize:vertical}
+.nwh3{grid-column:1/-1;font-size:13px;font-weight:700;color:var(--navy);border-bottom:1px solid var(--line);padding-bottom:4px;margin-top:4px}
+.pinfo{grid-column:1/-1;background:var(--bg);border-radius:10px;padding:10px 12px;font-size:13.5px;display:grid;grid-template-columns:repeat(3,1fr);gap:6px}.pinfo span{color:var(--muted);font-size:12px;display:block}
+.warn{grid-column:1/-1;background:var(--amber);color:var(--amberT);border-radius:9px;padding:9px 12px;font-size:13px}.warn:empty{display:none}
+.chk{grid-column:1/-1;flex-direction:row!important;align-items:center;gap:8px!important;font-size:14px!important;color:var(--txt)!important}.chk input{width:18px;height:18px}
+.nwf{display:flex;gap:10px;justify-content:flex-end;padding:0 18px 18px}.nwf button{border-radius:10px;padding:12px 18px;font:inherit;font-weight:600;cursor:pointer;border:1px solid var(--line);background:#fff}.nwf .go{background:var(--navy);color:#fff;border-color:var(--navy)}.nwf .go:disabled{opacity:.5;cursor:default}
+.sum{grid-column:1/-1;font-size:14px;line-height:1.6}.sum b{color:var(--navy)}
+@media(max-width:700px){.nwc{grid-template-columns:1fr}.pinfo{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
@@ -125,6 +138,13 @@ tr.flash td{animation:fl 2.5s}@keyframes fl{0%{background:#fff3b8}100%{backgroun
 </main>
 </div>
 <div class="shade" id="sh"></div><div class="drawer" id="dr"></div>
+<button class="fab" id="fab" hidden>+ Nueva orden</button>
+<div class="nw" id="nw" hidden><div class="nwb">
+ <div class="nwh"><b>Nueva orden</b><button class="x" id="nwx" aria-label="Cerrar">×</button></div>
+ <div class="mq">MAQUETA para validar: todavía no envía nada al servidor ni al técnico.</div>
+ <div id="nwbody"></div>
+ <div class="nwf" id="nwfoot"></div>
+</div></div>
 <script src="panel.js"></script>
 </body>
 </html>
