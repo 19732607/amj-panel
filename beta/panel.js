@@ -87,12 +87,12 @@ function repFmt(L,d0,d1,WK,QN,MS){ const addD0=(d,n)=>{ const x=new Date(d+'T12:
     const tA=avg(L.filter(o=>o.sa).map(o=>hrs(o.ca,o.sa))), tR=avg(L.map(o=>hrs(o.ca,o.fa))), tW=avg(L.filter(o=>o.min!=null).map(o=>o.min));
     const d24=L.filter(o=>hrs(o.ca,o.fa)<=24).length, d48=L.filter(o=>hrs(o.ca,o.fa)<=48).length, pct=(a,b)=>b?Math.round(a/b*100)+' %':'—';
     const nov=L.filter(o=>/SIN POSIBILIDAD DE EJECUCI/i.test(o.report)).length, byP={}; L.forEach(o=>{ const c=code(o); byP[c]=(byP[c]||0)+1 }); const rep2=Object.values(byP).filter(n=>n>1).length;
-    const refs=new Set(L.map(o=>String(o.ref))), RVm=(RV||[]).filter(r=>refs.has(String(r.reference))), st=avg(RVm.map(r=>Number(r.stars)));
+    /* Regla de Antonio (21/11/2026): las valoraciones quedan fuera de cualquier informe a clientes. */
     doc.append(H('Indicadores del mes (KPI)')); const g=el('div','rf-kp rf-kpi'); const kk=(v,t)=>{ const d=el('div'); d.append(el('b',null,String(v)),el('span',null,t)); g.append(d) };
     kk(rec.length,'órdenes recibidas'); kk(L.length,'órdenes finalizadas'); kk(opn.length,live?'abiertas a fecha de '+dm(dc):'abiertas al cierre del mes');
     kk(fH(tA),'tiempo medio de respuesta (del aviso al inicio del trabajo)'); kk(fH(tR),'tiempo medio de resolución (del aviso al cierre)'); kk(pct(d24,L.length),'resueltas en menos de 24 h'); kk(pct(d48,L.length),'resueltas en menos de 48 h');
     kk(tW===null?'—':dur(Math.round(tW)),'tiempo medio de trabajo en el inmueble'); kk(pisos,'inmuebles atendidos'); kk(rep2,'inmuebles con más de una orden'); kk(nov,'visitas sin posibilidad de ejecución');
-    kk(pct(L.filter(o=>(MED[o.id]||[]).length).length,L.length),'órdenes con fotografías'); kk(pct(L.filter(o=>o.report).length,L.length),'órdenes con informe del técnico'); kk(mload?eur2(sumM(allM,'total')):'…','materiales, IVA incluido'); kk(st===null?'—':st.toFixed(1).replace('.',',')+' ★ ('+RVm.length+')','valoración media');
+    kk(pct(L.filter(o=>(MED[o.id]||[]).length).length,L.length),'órdenes con fotografías'); kk(pct(L.filter(o=>o.report).length,L.length),'órdenes con informe del técnico'); kk(mload?eur2(sumM(allM,'total')):'…','materiales, IVA incluido');
     const offH=rec.filter(o=>{ const d=new Date(o.ca), h=Number(d.toLocaleString('en-GB',{timeZone:TZ,hour:'2-digit',hour12:false})), wd=d.toLocaleDateString('en-GB',{timeZone:TZ,weekday:'short'}); return h<8||h>=20||wd==='Sat'||wd==='Sun' }).length, mins=L.reduce((a,o)=>a+(o.min||0),0);
     kk(offH,'avisos creados fuera de horario (antes de 8, después de 20 o fin de semana)'); kk(new Set(L.filter(o=>has(o,'piso')).map(o=>code(o)+'|'+dayOf(o.fa))).size,'visitas con varias órdenes en el mismo inmueble'); kk(L.filter(o=>(o.min||0)>120).length,'órdenes con más de 2 h de trabajo'); kk(mins?dur(mins):'—','horas de trabajo en los inmuebles');
     doc.append(g,el('p','rf-note','Tiempos calculados sobre las órdenes finalizadas en el mes, desde la creación de la orden en la app.'));
@@ -108,10 +108,7 @@ function repFmt(L,d0,d1,WK,QN,MS){ const addD0=(d,n)=>{ const x=new Date(d+'T12:
     for(let a=d0;a<=dc;){ const wd=(new Date(a+'T12:00:00').getDay()+6)%7; let b=addD(a,6-wd); if(b>dc) b=dc; const F=L.filter(o=>dayOf(o.fa)>=a&&dayOf(o.fa)<=b);
       row(bw,[dm(a)+' – '+dm(b),String(rec.filter(o=>dayOf(o.ca)>=a&&dayOf(o.ca)<=b).length),String(F.length),String(new Set(F.map(code)).size),mload?eur2(sumM(F.flatMap(o=>MAT[o.id]||[]),'total')):'…']); a=addD(b,1) }
     row(bw,['Total',String(rec.length),String(L.length),String(pisos),mload?eur2(sumM(allM,'total')):'…'],'tot'); doc.append(tw);
-    /* valoraciones */
-    doc.append(H('Valoraciones del mes')); const [tv,bv]=table(['Orden / inmueble','Valoración','Comentario']); const byRef={}; L.forEach(o=>byRef[String(o.ref)]=o);
-    if(!RVm.length){ const e=td(RV?'No hay valoraciones de las órdenes de este mes.':'Cargando…'); e.colSpan=3; row(bv,[e]) }
-    RVm.forEach(r=>{ const o=byRef[String(r.reference)]; row(bv,[td('AMJ-'+r.reference+' · '+code(o),'nwr'),'★'.repeat(Number(r.stars))+'☆'.repeat(5-Number(r.stars)),r.comment||'—']) }); doc.append(tv) }
+  }
   if(WK&&L.length){ /* órdenes por inmueble y tipo de trabajo */
     doc.append(H('Órdenes por inmueble · '+per)); const cnt={}; L.forEach(o=>{ const c=code(o); cnt[c]=(cnt[c]||0)+1 }); const mx=Math.max(...Object.values(cnt)); const bars=el('div','rf-bars');
     Object.keys(cnt).sort().forEach(c=>{ const r=el('div'), bar=el('i'), f=el('u'); f.style.width=Math.round(cnt[c]/mx*100)+'%'; bar.append(f); r.append(el('span',null,c),bar,el('em',null,String(cnt[c]))); bars.append(r) }); doc.append(bars);
