@@ -56,11 +56,11 @@ function repThumb(m){ const a=el('a','rth'); a.href='#'; a.title=m.caption||''; 
 function repPhotos(o){ const L=MED[o.id]; const w=el('div','rph'); if(L===undefined){ w.append(el('span','muted','Cargando fotos…')); return w }
   if(!L.length){ w.append(el('span','muted','Sin fotos')); return w } L.forEach(m=>w.append(repThumb(m))); return w }
 /* Informes con el formato que AMJ envía al cliente (vista «Ver»). Diario: órdenes marcadas. Semanal: informe completo de la semana de un cliente. */
-function repFmt(L,d0,d1,WK){
+function repFmt(L,d0,d1,WK,QN){ const PW=QN?'quincena':'semana';
   const fd=(d,o)=>new Date(d+'T12:00:00').toLocaleDateString('es-ES',o), cap1=t=>t?t.charAt(0).toUpperCase()+t.slice(1).toLowerCase():'', dm=d=>fd(d,{day:'2-digit',month:'2-digit'});
   const cls=[...new Set(L.map(o=>o.cl))], one=cls.length===1, cname=cls.map(clName).join(' + '), city=[...new Set(L.map(o=>cap1(o.loc)).filter(Boolean))].join(' / ');
   const code=o=>(o.piso||o.ad||'—').replace(/^(ENSO|HELP)-/,''), dlong=fd(d1,{day:'numeric',month:'long',year:'numeric'});
-  const per=WK?'del '+fd(d0,d0.slice(0,7)===d1.slice(0,7)?{day:'numeric'}:{day:'numeric',month:'long'})+' al '+dlong:dlong;
+  const per=(QN?(d0.slice(8)==='01'?'1.ª':'2.ª')+' quincena de '+fd(d1,{month:'long'})+' · ':'')+(!WK?dlong:'del '+fd(d0,d0.slice(0,7)===d1.slice(0,7)?{day:'numeric'}:{day:'numeric',month:'long'})+' al '+dlong);
   const H=t=>el('h2','rf-h2',t), table=(heads,cl)=>{ const tb=el('table','rf-tb'+(cl?' '+cl:'')), hr=el('tr'); heads.forEach(h=>hr.append(el('th',null,h))); const th=el('thead'); th.append(hr); const bd=el('tbody'); tb.append(th,bd); return [tb,bd] };
   const row=(bd,cells,cl)=>{ const r=el('tr',cl||null); cells.forEach(c=>{ if(c instanceof Node) r.append(c); else r.append(el('td',null,c)) }); bd.append(r); return r };
   const td=(t,c)=>el('td',c||null,t);
@@ -72,7 +72,7 @@ function repFmt(L,d0,d1,WK){
   const sumM=(arr,f)=>arr.reduce((a,m)=>a+Number(m[f]||0),0), allM=L.flatMap(o=>MAT[o.id]||[]);
   const help=one&&cls[0]==='HELP', vkey=o=>(o.piso||o.ad)+'|'+dayOf(o.sa), m0=d1.slice(0,8)+'01';
   const hv=help?real().filter(o=>o.cl==='HELP'&&o.st!=='cancelled'&&o.sa&&dayOf(o.sa)>=m0&&dayOf(o.sa)<=d1):[], cupo=new Set(hv.map(vkey)).size;
-  const intro=el('p','rf-intro'); intro.append(el('b',null,L.length+(L.length===1?' orden de trabajo finalizada ':' órdenes de trabajo finalizadas ')+(WK?per:'el '+dlong)+'.'),document.createTextNode(' Se detallan las intervenciones por inmueble, el informe del técnico'+(WK?', las fotografías y los materiales declarados por los técnicos.':' y las fotografías de cada trabajo.'))); doc.append(intro);
+  const intro=el('p','rf-intro'); intro.append(el('b',null,L.length+(L.length===1?' orden de trabajo finalizada ':' órdenes de trabajo finalizadas ')+(WK?per.replace(/^.* · /,''):'el '+dlong)+'.'),document.createTextNode(' Se detallan las intervenciones por inmueble, el informe del técnico'+(WK?', las fotografías y los materiales declarados por los técnicos.':' y las fotografías de cada trabajo.'))); doc.append(intro);
   const box=el('div','rf-kp'); const k=(v,t)=>{ const d=el('div'); d.append(el('b',null,v),el('span',null,t)); box.append(d) };
   k(String(L.length),L.length===1?'orden finalizada':'órdenes finalizadas');
   if(help){ k(cupo+' / 100','avisos consumidos'); k(String(Math.max(100-cupo,0)),'avisos disponibles al '+dm(d1)) } else k(String(pisos),pisos===1?'inmueble atendido':'inmuebles atendidos');
@@ -101,16 +101,26 @@ function repFmt(L,d0,d1,WK){
   if(L.length) doc.append(H('Fotos de las intervenciones'));
   L.forEach(o=>{ const g=el('div','rf-og'); g.append(el('div','rf-oh',(WK?dm(dayOf(o.fa))+' · ':'')+'AMJ-'+o.ref+' · '+(o.work||'').replace(/\.$/,'')+' · '+code(o))); const w=repPhotos(o); w.className='rf-ph'; g.append(w); doc.append(g) });
   if(WK){ /* materiales */
+    if(QN&&mload){ const withM=L.filter(o=>(MAT[o.id]||[]).length), tot=sumM(allM,'total'), oT=o=>sumM(MAT[o.id],'total');
+      doc.append(H('Informe de materiales')); const p=el('p','rf-intro'); p.append(el('b',null,eur2(tot)+' en materiales en '+withM.length+' de las '+L.length+' órdenes finalizadas.'),document.createTextNode(' Los materiales se repercuten al mismo precio de compra del técnico, sin recargo, con el IVA desglosado.')); doc.append(p);
+      const bx=el('div','rf-kp'); const kk=(v,t)=>{ const d=el('div'); d.append(el('b',null,v),el('span',null,t)); bx.append(d) };
+      kk(eur2(tot),'total materiales, IVA incluido (base '+eur2(sumM(allM,'subtotal'))+' · IVA '+eur2(sumM(allM,'iva'))+')'); kk(withM.length+' / '+L.length,'órdenes con materiales'+(L.length?' ('+Math.round(withM.length/L.length*100)+' %)':''));
+      kk(withM.length?eur2(tot/withM.length):'—','gasto medio por orden con materiales'); kk(L.length?eur2(tot/L.length):'—','gasto medio por orden finalizada'); doc.append(bx);
+      const spend=(title,keyf)=>{ const g={}; withM.forEach(o=>{ const k=keyf(o); (g[k]=g[k]||{n:0,t:0}); g[k].n++; g[k].t+=oT(o) }); const ks=Object.keys(g).sort((x,y)=>g[y].t-g[x].t); if(!ks.length) return; const mx=g[ks[0]].t||1;
+        doc.append(H(title)); const w=el('div','rf-sp'); ks.forEach(k=>{ const r=el('div'), bar=el('i'), f=el('u'); f.style.width=Math.round(g[k].t/mx*100)+'%'; bar.append(f); r.append(el('span',null,k),el('small',null,g[k].n+(g[k].n===1?' orden':' órdenes')),bar,el('b',null,eur2(g[k].t)),el('em',null,(tot?Math.round(g[k].t/tot*100):0)+' %')); w.append(r) }); doc.append(w) };
+      spend('Gasto por tipo de trabajo',o=>o.sv||'Sin clasificar'); spend('Gasto por inmueble',code);
+      if(withM.length){ doc.append(H('Por técnico')); const [t5,b5]=table(['Técnico','Órdenes con material','Total']); const g={}; withM.forEach(o=>{ const k=o.tc||'—'; (g[k]=g[k]||{n:0,t:0}); g[k].n++; g[k].t+=oT(o) });
+        Object.keys(g).sort((x,y)=>g[y].t-g[x].t).forEach(k=>row(b5,[k,String(g[k].n),eur2(g[k].t)])); row(b5,['Total',String(withM.length),eur2(tot)],'tot'); doc.append(t5) } }
     doc.append(H('Relación detallada de materiales'),el('p','rf-intro','Cada línea corresponde a un material declarado por el técnico en la orden. Importes al precio de compra, sin recargo.'));
     const [t3,b3]=table(['Fecha','Orden / inmueble','Trabajo y material','Base','IVA','Total'],'mat'); const withM=L.filter(o=>(MAT[o.id]||[]).length);
-    if(!mload){ const e=td('Cargando materiales…'); e.colSpan=6; row(b3,[e]) } else if(!withM.length){ const e=td('Esta semana no se han declarado materiales.'); e.colSpan=6; row(b3,[e]) }
+    if(!mload){ const e=td('Cargando materiales…'); e.colSpan=6; row(b3,[e]) } else if(!withM.length){ const e=td('Esta '+PW+' no se han declarado materiales.'); e.colSpan=6; row(b3,[e]) }
     withM.forEach(o=>{ const M=MAT[o.id]; M.forEach((m,i)=>{ const c=el('td'); if(!i) c.append(el('b',null,(o.work||'').replace(/\.$/,'')),el('br')); c.append(document.createTextNode((m.description||'—')+(Number(m.quantity||1)!==1?' × '+Number(m.quantity):'')));
         row(b3,[td(i?'':dm(dayOf(o.fa)),'nwr'),td(i?'':'AMJ-'+o.ref+' · '+code(o),'nwr'),c,td(eur2(m.subtotal),'r'),td(eur2(m.iva),'r'),td(eur2(m.total),'r')]) });
       if(M.length>1) row(b3,['','','Subtotal AMJ-'+o.ref,td(eur2(sumM(M,'subtotal')),'r'),td(eur2(sumM(M,'iva')),'r'),td(eur2(sumM(M,'total')),'r')],'sub') });
-    if(mload&&withM.length) row(b3,['','','Total de la semana',td(eur2(sumM(allM,'subtotal')),'r'),td(eur2(sumM(allM,'iva')),'r'),td(eur2(sumM(allM,'total')),'r')],'tot');
+    if(mload&&withM.length) row(b3,['','','Total de la '+PW,td(eur2(sumM(allM,'subtotal')),'r'),td(eur2(sumM(allM,'iva')),'r'),td(eur2(sumM(allM,'total')),'r')],'tot');
     doc.append(t3);
     const open=real().filter(o=>!['completed','cancelled'].includes(o.st)&&cls.includes(o.cl)&&dayOf(o.ca)<=d1);
-    if(open.length){ doc.append(H('Órdenes abiertas al cierre de la semana')); const [t4,b4]=table(['Orden / inmueble','Trabajo','Estado']); open.forEach(o=>row(b4,[td('AMJ-'+o.ref+' · '+code(o),'nwr'),o.work,(STATUS[o.st]||[o.st])[0]])); doc.append(t4) } }
+    if(open.length){ doc.append(H('Órdenes abiertas al cierre de la '+PW)); const [t4,b4]=table(['Orden / inmueble','Trabajo','Estado']); open.forEach(o=>row(b4,[td('AMJ-'+o.ref+' · '+code(o),'nwr'),o.work,(STATUS[o.st]||[o.st])[0]])); doc.append(t4) } }
   const ft=el('div','rf-ft'); ft.append(el('span',null,'amjmaintenance.es · Informe para '+cname),el('span',null,'ASSET MAINTENANCE · JUST IN TIME')); doc.append(ft);
   return doc }
 const eur2=v=>Number(v||0).toLocaleString('es-ES',{minimumFractionDigits:2,maximumFractionDigits:2})+' €';
@@ -350,15 +360,15 @@ const SECS={
      card('Órdenes con materiales pendientes de AMJ',['Orden','Técnico','Terminada','Motivo'],od.map(x=>['AMJ-'+x.reference,x.technician||'—',fmtD(x.finished_at),({NO_RECEIPT:'Sin ticket',NO_QUOTE:'Sin presupuesto de materiales',EXCEEDS_QUOTE:'Ticket supera lo presupuestado',RECEIPTS_PENDING:'Ticket por revisar'})[(x.materials_state||{}).reason]||(x.materials_state||{}).reason||'—']),'No hay órdenes pendientes.'),
      card('Histórico de tickets (60 días)',['Orden','Técnico','Proveedor','Fecha ticket','Total ticket','Aceptado','Estado'],(RH||[]).map(r=>['AMJ-'+r.reference,r.technician||'—',r.vendor_name||'—',r.receipt_date?fmtD(r.receipt_date):'—',r.total!=null?eur(r.total):'—',r.accepted_total!=null?eur(r.accepted_total):'—',badge(({approved:'Aprobado',validated:'Validado',rejected:'Rechazado',withdrawn:'Retirado',pending_review:'Por revisar'})[r.status]||r.status,r.status==='approved'||r.status==='validated'?'ok':(r.status==='pending_review'?'s-pending':'no'))]),RH?'No hay tickets en los últimos 60 días.':'Cargando…')] }],
  informes:['Informes',()=>{ if(!repDay) repDay=todayStr();
-   const WK=repPer==='sem';
+   const QN=repPer==='qui', WK=repPer==='sem'||QN, PW=QN?'quincena':'semana';
    const ctl=el('div','repctl');
-   const seg=el('div','seg'); [['dia','Diario'],['sem','Semanal'],['qui','Quincenal'],['mes','Mensual'],['tot','Total']].forEach(([k,t])=>{ const on=k==='dia'||k==='sem'; const b=el('button',repPer===k?'on':null,t+(on?'':' · por definir')); b.disabled=!on; b.onclick=()=>{ repPer=k; renderSec() }; seg.append(b) });
+   const seg=el('div','seg'); [['dia','Diario'],['sem','Semanal'],['qui','Quincenal'],['mes','Mensual'],['tot','Total']].forEach(([k,t])=>{ const on=k==='dia'||k==='sem'||k==='qui'; const b=el('button',repPer===k?'on':null,t+(on?'':' · por definir')); b.disabled=!on; b.onclick=()=>{ repPer=k; renderSec() }; seg.append(b) });
    const scl=el('select'); scl.append(new Option('Todos los clientes',''));
    [...new Set(real().map(o=>o.cl))].sort((x,y)=>clName(x).localeCompare(clName(y))).forEach(c=>scl.append(new Option(clName(c),c))); scl.value=repCl; scl.onchange=()=>{ repCl=scl.value; renderSec() };
    const dIn=el('input'); dIn.type='date'; dIn.value=repDay; dIn.max=todayStr(); dIn.onchange=()=>{ if(dIn.value){ repDay=dIn.value; renderSec() } };
    const addD=(d,n)=>{ const x=new Date(d+'T12:00:00'); x.setDate(x.getDate()+n); return x.toLocaleDateString('sv-SE') };
-   const mv=n=>{ const v=addD(repDay,n); if(v<=todayStr()||n<0){ repDay=v>todayStr()?todayStr():v; renderSec() } };
-   const st=WK?7:1, prev=el('button','out',WK?'◀ Semana anterior':'◀ Día anterior'), next=el('button','out',WK?'Semana siguiente ▶':'Día siguiente ▶'); prev.onclick=()=>mv(-st); next.onclick=()=>mv(st); prev.style.marginLeft=next.style.marginLeft='0';
+   const mv=n=>{ let v=addD(repDay,n); if(QN){ const dd=+repDay.slice(8), a=repDay.slice(0,8); v=n<0?addD(a+(dd<=15?'01':'16'),-1):(dd<=15?a+'16':addD(a+'28',4).slice(0,8)+'01') } if(v<=todayStr()||n<0){ repDay=v>todayStr()?todayStr():v; renderSec() } };
+   const st=WK?7:1, prev=el('button','out',QN?'◀ Quincena anterior':WK?'◀ Semana anterior':'◀ Día anterior'), next=el('button','out',QN?'Quincena siguiente ▶':WK?'Semana siguiente ▶':'Día siguiente ▶'); prev.onclick=()=>mv(-st); next.onclick=()=>mv(st); prev.style.marginLeft=next.style.marginLeft='0';
    const pr=el('button','out','🖨 Imprimir / PDF'); pr.onclick=()=>window.print();
    const bVer=el('button','out'), bEnv=el('button','out'), bBack=el('button','out','◀ Volver a seleccionar'); bVer.style.marginLeft=bEnv.style.marginLeft=bBack.style.marginLeft='0';
    let selN=()=>0; const updSel=()=>{ const n=selN(); bVer.textContent='👁 Ver ('+n+')'; bEnv.textContent='✉ Enviar por email ('+n+')'; bVer.disabled=bEnv.disabled=!n };
@@ -367,8 +377,9 @@ const SECS={
    const row=el('div','repbar'); if(repView) row.append(bBack,bEnv,pr); else row.append(scl,prev,dIn,next,bVer,bEnv); ctl.append(seg,row); if(repMsg) ctl.append(el('div','repmsg',repMsg));
    /* periodo */
    let d0=repDay, d1=repDay; if(WK){ const wd=(new Date(repDay+'T12:00:00').getDay()+6)%7; d0=addD(repDay,-wd); d1=addD(d0,6) }
+   if(QN){ const a=repDay.slice(0,8); if(+repDay.slice(8)<=15){ d0=a+'01'; d1=a+'15' } else { d0=a+'16'; d1=addD(addD(a+'28',4).slice(0,8)+'01',-1) } }
    const fd=(d,o)=>new Date(d+'T12:00:00').toLocaleDateString('es-ES',o);
-   const per=WK?('Semana del '+fd(d0,{day:'numeric',month:'long'})+' al '+fd(d1,{day:'numeric',month:'long',year:'numeric'})):(()=>{ const f=fd(repDay,{weekday:'long',day:'numeric',month:'long',year:'numeric'}); return f.charAt(0).toUpperCase()+f.slice(1) })();
+   const per=WK?((QN?(d0.slice(8)==='01'?'1.ª':'2.ª')+' quincena · del ':'Semana del ')+fd(d0,{day:'numeric',month:'long'})+' al '+fd(d1,{day:'numeric',month:'long',year:'numeric'})):(()=>{ const f=fd(repDay,{weekday:'long',day:'numeric',month:'long',year:'numeric'}); return f.charAt(0).toUpperCase()+f.slice(1) })();
    const LA=real().filter(o=>o.st==='completed'&&dayOf(o.fa)>=d0&&dayOf(o.fa)<=d1&&(!repCl||o.cl===repCl)).sort((x,y)=>new Date(x.fa)-new Date(y.fa)||x.ref-y.ref);
    const wcl=[...new Set(LA.map(o=>o.cl))].sort((x,y)=>clName(x).localeCompare(clName(y)));
    selN=()=>WK?wcl.filter(c=>repSelW.has(c)).length:LA.filter(o=>repSel.has(o.id)).length;
@@ -376,14 +387,14 @@ const SECS={
    const L=repView?LA.filter(o=>repSel.has(o.id)):LA, SEL=!repView; updSel();
    const wrap=docs=>{ const w=el('div','repdoc rfw'); docs.forEach(d=>w.append(d)); return w };
    if(WK){ repEnsure(LA.map(o=>o.id));
-     if(repView) return [ctl,src('Así lo verá el cliente: el informe completo de la semana.'),wrap(wcl.filter(c=>repSelW.has(c)).map(c=>repFmt(LA.filter(o=>o.cl===c),d0,d1,true)))];
-     const card=el('div','repdoc'); card.append(el('h3','reph3','Informe semanal · '+per));
+     if(repView) return [ctl,src('Así lo verá el cliente: el informe completo de la '+PW+'.'),wrap(wcl.filter(c=>repSelW.has(c)).map(c=>repFmt(LA.filter(o=>o.cl===c),d0,d1,true,QN)))];
+     const card=el('div','repdoc'); card.append(el('h3','reph3','Informe '+(QN?'quincenal':'semanal')+' · '+per));
      const tb=el('table','reptb sel wk'), hr=el('tr'); ['','Cliente','Órdenes finalizadas','Inmuebles','Materiales con IVA'].forEach((h,i)=>hr.append(el('th',i?null:'ck',h))); const th=el('thead'); th.append(hr); const bd=el('tbody');
-     if(!wcl.length){ const r=el('tr'), e=el('td','empty','No hay órdenes terminadas esta semana.'); e.colSpan=5; r.append(e); bd.append(r) }
+     if(!wcl.length){ const r=el('tr'), e=el('td','empty','No hay órdenes terminadas esta '+PW+'.'); e.colSpan=5; r.append(e); bd.append(r) }
      wcl.forEach(c=>{ const G=LA.filter(o=>o.cl===c), r=el('tr'), k=el('td','ck'), ck=el('input'); ck.type='checkbox'; ck.checked=repSelW.has(c); ck.onchange=()=>{ ck.checked?repSelW.add(c):repSelW.delete(c); updSel() }; k.append(ck);
        r.append(k,el('td','b',clName(c)),el('td',null,String(G.length)),el('td',null,String(new Set(G.map(o=>o.piso||o.ad)).size)),el('td',null,G.every(o=>o.id in MAT)?eur2(G.reduce((a,o)=>a+MAT[o.id].reduce((x,m)=>x+Number(m.total||0),0),0)):'…')); bd.append(r) });
      tb.append(th,bd); card.append(tb);
-     return [ctl,src('Informe semanal completo de cada cliente, con todos los trabajos de la semana. Marca la casilla del cliente y pulsa «Ver» para verlo como lo recibirá, o «Enviar por email».'),card] }
+     return [ctl,src('Informe '+(QN?'quincenal':'semanal')+' completo de cada cliente, con todos los trabajos de la '+PW+'. Marca la casilla del cliente y pulsa «Ver» para verlo como lo recibirá, o «Enviar por email».'),card] }
    if(repView){ repEnsure(L.map(o=>o.id)); const cs=new Set(L.map(o=>o.cl)); const out=[ctl]; if(cs.size>1) out.push(el('div','repmsg','Has marcado órdenes de '+cs.size+' clientes distintos: para enviar, marca solo las de un cliente.')); out.push(src('Así lo verá el cliente: solo las órdenes que has marcado.'),wrap([repFmt(L,repDay,repDay,false)])); return out }
    repEnsure(L.map(o=>o.id));
    const doc=el('div','repdoc'); const hd=el('div','rephd'); const lg=document.querySelector('.brand img'); if(lg){ const im=el('img'); im.src=lg.src; im.alt='AMJ'; hd.append(im) }
