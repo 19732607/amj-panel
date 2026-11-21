@@ -6,7 +6,7 @@
 const SB='https://biwjrbcfupmbpoxnrolt.supabase.co', KEY='sb_publishable_ywkQpKdfMksufdqWkv-fyA_OtcxTXEm';
 const TZ='Europe/Madrid', POLL=15000, PAGE=100, MAXPAGES=200, STORE='amj.panel.session';
 const $=id=>document.getElementById(id);
-let session=null, WARN='', TEST=new Set(), T=null, M=null, P=null, RH=null, payT='', sec='ordenes', kpiDays='all', kpiFrom='', kpiTo='', RV=null, CP=null, repCl='', repDay='', repPer='dia', O=[], prevRev={}, view='all', lastOk=0, timer=null, loading=false;
+let session=null, WARN='', TEST=new Set(), T=null, M=null, P=null, RH=null, payT='', sec='ordenes', kpiDays='all', kpiFrom='', kpiTo='', RV=null, CP=null, repCl='', repDay='', repPer='dia', repSel=new Set(), repView=false, repMsg='', O=[], prevRev={}, view='all', lastOk=0, timer=null, loading=false;
 
 /* ---------- sesión ---------- */
 function storage(){ try{ return localStorage.getItem(STORE)?localStorage:sessionStorage }catch(e){ return null } }
@@ -302,15 +302,21 @@ const SECS={
    const mv=n=>{ const v=addD(repDay,n); if(v<=todayStr()||n<0){ repDay=v>todayStr()?todayStr():v; renderSec() } };
    const st=WK?7:1, prev=el('button','out',WK?'◀ Semana anterior':'◀ Día anterior'), next=el('button','out',WK?'Semana siguiente ▶':'Día siguiente ▶'); prev.onclick=()=>mv(-st); next.onclick=()=>mv(st); prev.style.marginLeft=next.style.marginLeft='0';
    const pr=el('button','out','🖨 Imprimir / PDF'); pr.onclick=()=>window.print();
-   const row=el('div','repbar'); row.append(scl,prev,dIn,next,pr); ctl.append(seg,row);
+   const bVer=el('button','out'), bEnv=el('button','out'), bBack=el('button','out','◀ Volver a seleccionar'); bVer.style.marginLeft=bEnv.style.marginLeft=bBack.style.marginLeft='0';
+   const updSel=()=>{ const n=LA.filter(o=>repSel.has(o.id)).length; bVer.textContent='👁 Ver ('+n+')'; bEnv.textContent='✉ Enviar por email ('+n+')'; bVer.disabled=bEnv.disabled=!n };
+   bVer.onclick=()=>{ repView=true; repMsg=''; renderSec() }; bBack.onclick=()=>{ repView=false; repMsg=''; renderSec() };
+   bEnv.onclick=()=>{ repMsg='Envío por email todavía sin conectar: falta tu OK para crear la función de envío en el servidor.'; renderSec() };
+   const row=el('div','repbar'); if(repView) row.append(bBack,bEnv,pr); else row.append(scl,prev,dIn,next,bVer,bEnv); ctl.append(seg,row); if(repMsg) ctl.append(el('div','repmsg',repMsg));
    /* periodo */
    let d0=repDay, d1=repDay; if(WK){ const wd=(new Date(repDay+'T12:00:00').getDay()+6)%7; d0=addD(repDay,-wd); d1=addD(d0,6) }
    const fd=(d,o)=>new Date(d+'T12:00:00').toLocaleDateString('es-ES',o);
    const per=WK?('Semana del '+fd(d0,{day:'numeric',month:'long'})+' al '+fd(d1,{day:'numeric',month:'long',year:'numeric'})):(()=>{ const f=fd(repDay,{weekday:'long',day:'numeric',month:'long',year:'numeric'}); return f.charAt(0).toUpperCase()+f.slice(1) })();
-   const L=real().filter(o=>o.st==='completed'&&dayOf(o.fa)>=d0&&dayOf(o.fa)<=d1&&(!repCl||o.cl===repCl)).sort((x,y)=>new Date(x.fa)-new Date(y.fa)||x.ref-y.ref);
+   const LA=real().filter(o=>o.st==='completed'&&dayOf(o.fa)>=d0&&dayOf(o.fa)<=d1&&(!repCl||o.cl===repCl)).sort((x,y)=>new Date(x.fa)-new Date(y.fa)||x.ref-y.ref);
+   if(repView&&!LA.some(o=>repSel.has(o.id))) repView=false;
+   const L=repView?LA.filter(o=>repSel.has(o.id)):LA, SEL=!repView; updSel();
    repEnsure(L.map(o=>o.id));
    const doc=el('div','repdoc'); const hd=el('div','rephd'); const lg=document.querySelector('.brand img'); if(lg){ const im=el('img'); im.src=lg.src; im.alt='AMJ'; hd.append(im) }
-   const tt=el('div'); tt.append(el('h2',null,(WK?'Informe semanal':'Informe diario')+(repCl?' · '+clName(repCl):'')),el('div','repsub',per+' · '+L.length+(L.length===1?' orden terminada':' órdenes terminadas'))); hd.append(tt); doc.append(hd);
+   const tt=el('div'); tt.append(el('h2',null,(WK?'Informe semanal':'Informe diario')+(repCl?' · '+clName(repCl):'')),el('div','repsub',per+' · '+L.length+(L.length===1?' orden terminada':' órdenes terminadas')+(SEL?' · marca las que quieres ver y enviar':''))); hd.append(tt); doc.append(hd);
    const loaded=L.every(o=>o.id in MAT);
    const matTot=L.reduce((a,o)=>a+(MAT[o.id]||[]).reduce((x,m)=>x+Number(m.total||0),0),0);
    if(WK){ /* resumen */
@@ -322,9 +328,10 @@ const SECS={
      doc.append(box); if(repCl==='HELP') doc.append(el('div','repnote','Cupo: 1 inmueble + día de inicio = 1 aviso (mismo criterio que el control de avisos).')) }
    /* tabla de órdenes */
    doc.append(el('h3','reph3',WK?'Órdenes terminadas':'Intervenciones'));
-   const tb=el('table','reptb'), thr=el('tr'); (WK?['Fecha','Orden','Cliente','Código piso','Informe técnico y fotos']:['Orden','Cliente','Código piso','Informe técnico y fotos']).forEach(h=>thr.append(el('th',null,h))); const th=el('thead'); th.append(thr); tb.append(th); const bd=el('tbody');
-   if(!L.length){ const tr=el('tr'), td=el('td','empty',WK?'No hay órdenes terminadas esta semana.':'No hay órdenes terminadas este día.'); td.colSpan=WK?5:4; tr.append(td); bd.append(tr) }
+   const tb=el('table','reptb'+(SEL?' sel':'')), thr=el('tr'); const cks=[]; if(SEL){ const h=el('th','ck'), all=el('input'); all.type='checkbox'; all.title='Marcar todas'; all.checked=L.length>0&&L.every(o=>repSel.has(o.id)); all.onchange=()=>{ L.forEach(o=>all.checked?repSel.add(o.id):repSel.delete(o.id)); cks.forEach(c=>c.checked=all.checked); updSel() }; h.append(all); thr.append(h) } (WK?['Fecha','Orden','Cliente','Código piso','Informe técnico y fotos']:['Orden','Cliente','Código piso','Informe técnico y fotos']).forEach(h=>thr.append(el('th',null,h))); const th=el('thead'); th.append(thr); tb.append(th); const bd=el('tbody');
+   if(!L.length){ const tr=el('tr'), td=el('td','empty',WK?'No hay órdenes terminadas esta semana.':'No hay órdenes terminadas este día.'); td.colSpan=(WK?5:4)+(SEL?1:0); tr.append(td); bd.append(tr) }
    L.forEach(o=>{ const tr=el('tr'); const r=el('td'); const tx=el('div',o.report?null:'muted',o.report||'(El técnico no escribió informe)'); tx.style.whiteSpace='pre-wrap'; r.append(tx,repPhotos(o));
+     if(SEL){ const c=el('td','ck'), ck=el('input'); ck.type='checkbox'; ck.checked=repSel.has(o.id); ck.onchange=()=>{ ck.checked?repSel.add(o.id):repSel.delete(o.id); updSel() }; cks.push(ck); c.append(ck); tr.append(c) }
      if(WK) tr.append(el('td','nw',fd(dayOf(o.fa),{day:'2-digit',month:'2-digit'})));
      tr.append(el('td','b','AMJ-'+o.ref),el('td',null,clName(o.cl)),el('td','b',o.piso||o.ad||'—'),r); bd.append(tr) });
    tb.append(bd); doc.append(tb);
@@ -343,7 +350,7 @@ const SECS={
      if(open.length){ doc.append(el('h3','reph3','Órdenes abiertas al cierre de la semana')); const ot=el('table','reptb'), oh=el('tr'); ['Orden','Código piso','Trabajo','Estado'].forEach(h=>oh.append(el('th',null,h))); const oth=el('thead'); oth.append(oh); ot.append(oth); const ob=el('tbody');
        open.forEach(o=>{ const tr=el('tr'); tr.append(el('td','b','AMJ-'+o.ref),el('td','b',o.piso||o.ad||'—'),el('td',null,o.work),el('td',null,(STATUS[o.st]||[o.st])[0])); ob.append(tr) }); ot.append(ob); doc.append(ot) } }
    doc.append(el('div','repft','ASSET MAINTENANCE · JUST IN TIME'));
-   return [ctl,src('MAQUETA con datos reales (solo lectura): órdenes reales terminadas en el periodo, sin pruebas. Las fotos son las verificadas de cada orden; pulsa una para verla en grande.'),doc] }],
+   return [ctl,src(repView?'Así lo verá el cliente: solo las órdenes que has marcado.':'MAQUETA con datos reales (solo lectura): órdenes reales terminadas en el periodo, sin pruebas. Marca con la casilla las órdenes que quieres ver y enviar. Las fotos son las verificadas de cada orden; pulsa una para verla en grande.'),doc] }],
  kpi:['KPI',()=>{
    /* Todo en una sola página: sin pestañas ni clics para ver información relacionada. */
    const now=Date.now(), DAY=864e5;
