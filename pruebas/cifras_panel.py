@@ -10,7 +10,7 @@ FILAS = [O(1, "HELP-P1", "completed", "2026-10-20T08:00:00Z", "2026-10-20T09:00:
          O(5, "HELP-P4", "assigned", "2026-10-28T08:00:00Z"),
          O(6, "ENSO-E1", "assigned", "2026-10-05T08:00:00Z"),                                                                                       # cliente sin cierres en octubre
          O(7, "HELP-P5", "completed", "2026-10-31T21:00:00Z", "2026-10-31T22:30:00Z", "2026-10-31T23:30:00Z", "Trabajo hecho.")]                    # 31/10 23:30 UTC = 01/11 00:30 en Madrid: es de noviembre
-PREPARA = "()=>{ __t(`session={access_token:'x',expires_at:Date.now()+9e12}; O=normalize(" + json.dumps(FILAS) + """); computeTags(); RV=[]; O.forEach(o=>{ MED[o.id]=[]; MAT[o.id]=[] });
+PREPARA = "()=>{ __t(`session={access_token:'x',expires_at:Date.now()+9e12}; O=normalize(" + json.dumps(FILAS) + """); computeTags(); RV=[]; O.forEach(o=>{ MED[o.id]=[]; MAT[o.id]=[] }); MAT[1]=[{description:'Material ficticio',quantity:1,unit_price:50,subtotal:50,iva:10.5,total:60.5}]; MAT[2]=[{description:'Otro',quantity:1,unit_price:10,subtotal:10,iva:2.1,total:12.1}]; MAT[3]=[{description:'Otro',quantity:1,unit_price:4,subtotal:4,iva:0.84,total:4.84}];
   document.querySelectorAll('[hidden]').forEach(e=>e.hidden=false); document.getElementById('nw').hidden=true; document.getElementById('login').style.display='none'; lastOk=1;
   sec='informes'; repPer='mes'; repDay='2026-10-15'; repCl=''; renderSec();`) }"""
 ok = lambda c, m: (print("OK ·", m) if c else (_ for _ in ()).throw(AssertionError(m)))
@@ -20,7 +20,7 @@ async def main():
         await pg.clock.set_fixed_time("2026-11-21T12:00:00Z"); hist = {"hay": False}
         async def contexto(route):
             if not hist["hay"]: return await route.fulfill(status=404, json={"code": "PGRST202"})
-            await route.fulfill(json=[{"id": 4, "ref": 904, "cancelada_at": "2026-11-05T10:00:00Z"}])
+            await route.fulfill(json=[{"id": 4, "ref": 904, "cancelada_at": "2026-11-05T10:00:00Z"}, {"id": 1, "justificantes": [{"estado": "approved", "base": 41.32, "iva": 8.68, "total": 50, "aceptado": 50}]}, {"id": 2, "justificantes": [{"estado": "rejected"}]}])
         await pg.route("**/rest/v1/rpc/amj_admin_informe_ordenes", contexto)
         await pg.goto("http://127.0.0.1:8791/beta/index.html"); await pg.evaluate(PREPARA); await pg.wait_for_function("()=>__t('CTX')===null")
         lista = await pg.inner_text(".reptb"); ok("HELPHOUSING3" in lista and "ENSO0" in lista, "un cliente sin cierres en el periodo también se puede consultar (ENSO, 0 órdenes)")
@@ -37,6 +37,9 @@ async def main():
         ok(t.count("Sin posibilidad de ejecución") == 2 and "★" not in t and "Nombre Apellido" not in t and "Apellido" not in t, "detalle: estado de las dos órdenes sin ejecución; sin valoraciones ni apellidos de técnicos")
         hist["hay"] = True; await pg.evaluate("()=>{ __t('CTX=undefined; repCtx()') }"); await pg.wait_for_function("()=>{ const c=__t('CTX'); return c&&c[4] }"); t = await ver("HELP")
         ok(val(t, "abiertas al cierre del mes") == "3" and "según el estado de hoy" not in t, "con el histórico del servidor, la orden cancelada después del cierre cuenta como abierta en esa fecha"); ok("AMJ-904 · P3\tTrabajo ficticio 4\tAbierta en esa fecha" in t and "ancelad" not in t, "esa orden aparece en la lista de abiertas sin mencionar la cancelación (regla: las canceladas no se muestran al cliente)")
+        aviso = await pg.inner_text(".repmat"); doc = await pg.inner_text("#obody .rf")
+        ok("AMJ-901: declarado 60,50 € · acreditado con justificante 50,00 € · diferencia 10,50 €" in aviso and "AMJ-902: declarado 12,10 € · justificante rechazado" in aviso and "AMJ-903: declarado 4,84 € · justificante ausente" in aviso, "bloque 4 · aviso interno: declarado frente a justificante (diferencia, rechazado y ausente)")
+        ok("sin recargo" not in doc and "precio de compra" not in doc and "justificante" not in doc and "Importes declarados por los técnicos" in doc, "bloque 4 · el informe del cliente no afirma «precio de compra, sin recargo» ni muestra el aviso interno")
         t = await ver("ENSO"); ok("0 órdenes de trabajo finalizadas" in t and "No hay órdenes finalizadas en el periodo." in t and val(t, "órdenes recibidas") == "1", "informe a cero de un cliente sin cierres: se genera con sus recibidas y abiertas")
         await pg.evaluate("()=>__t(`repDay='2026-11-10'; repSelW=new Set(['HELP']); repView=true; renderSec()`)"); t = await pg.inner_text("#obody .rf")
         ok("AMJ-907" in t and "Periodo en curso: datos hasta el 21/11" in t and val(t, "avisos consumidos") == "0 / 100", "noviembre en curso: corte el 21/11; la orden cerrada el 01/11 (Madrid) es de noviembre y su aviso, del periodo en que empezó")

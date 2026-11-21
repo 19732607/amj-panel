@@ -160,7 +160,7 @@ function repFmt(L,d0,d1,WK,QN,MS,CL){ const addD0=(d,n)=>{ const x=new Date(d+'T
   L.forEach(o=>{ const g=el('div','rf-og'); g.append(el('div','rf-oh',(WK?dm(dayOf(o.fa))+' · ':'')+'AMJ-'+o.ref+' · '+(o.work||'').replace(/\.$/,'')+' · '+code(o))); const w=repPhotos(o); w.className='rf-ph'; g.append(w); g._m={id:o.id}; doc.append(g) });
   if(WK){ /* materiales */
     if((QN||MS)&&mload){ const withM=L.filter(o=>(MAT[o.id]||[]).length), tot=sumM(allM,'total'), oT=o=>sumM(MAT[o.id],'total');
-      doc.append(H('Informe de materiales')); const p=el('p','rf-intro'); p.append(el('b',null,eur2(tot)+' en materiales en '+withM.length+' de las '+L.length+' órdenes finalizadas.'),document.createTextNode(' Los materiales se repercuten al mismo precio de compra del técnico, sin recargo, con el IVA desglosado.')); doc.append(p);
+      doc.append(H('Informe de materiales')); const p=el('p','rf-intro'); p.append(el('b',null,eur2(tot)+' en materiales en '+withM.length+' de las '+L.length+' órdenes finalizadas.'),document.createTextNode(' Importes declarados por los técnicos, con el IVA desglosado.')); doc.append(p);
       const bx=el('div','rf-kp'); const kk=(v,t)=>{ const d=el('div'); d.append(el('b',null,v),el('span',null,t)); bx.append(d) };
       kk(eur2(tot),'total materiales, IVA incluido (base '+eur2(sumM(allM,'subtotal'))+' · IVA '+eur2(sumM(allM,'iva'))+')'); kk(withM.length+' / '+L.length,'órdenes con materiales'+(L.length?' ('+Math.round(withM.length/L.length*100)+' %)':''));
       kk(withM.length?eur2(tot/withM.length):'—','gasto medio por orden con materiales'); kk(L.length?eur2(tot/L.length):'—','gasto medio por orden finalizada'); doc.append(bx);
@@ -169,7 +169,7 @@ function repFmt(L,d0,d1,WK,QN,MS,CL){ const addD0=(d,n)=>{ const x=new Date(d+'T
       spend('Gasto por tipo de trabajo',o=>o.sv||'Sin clasificar'); spend('Gasto por inmueble',code);
       if(withM.length){ doc.append(H('Por técnico')); const [t5,b5]=table(['Técnico','Órdenes con material','Total']); const g={}; withM.forEach(o=>{ const k=(o.tc||'—').trim().split(/\s+/)[0]; /* ante el cliente, solo el nombre de pila */ (g[k]=g[k]||{n:0,t:0}); g[k].n++; g[k].t+=oT(o) });
         Object.keys(g).sort((x,y)=>g[y].t-g[x].t).forEach(k=>row(b5,[k,String(g[k].n),eur2(g[k].t)])); row(b5,['Total',String(withM.length),eur2(tot)],'tot'); doc.append(t5) } }
-    doc.append(H('Relación detallada de materiales'),el('p','rf-intro','Cada línea corresponde a un material declarado por el técnico en la orden. Importes al precio de compra, sin recargo.'));
+    doc.append(H('Relación detallada de materiales'),el('p','rf-intro','Cada línea corresponde a un material declarado por el técnico en la orden.'));
     const [t3,b3]=table(['Fecha','Orden / inmueble','Trabajo y material','Base','IVA','Total'],'mat'); const withM=L.filter(o=>(MAT[o.id]||[]).length);
     if(!mload){ const e=td('Cargando materiales…'); e.colSpan=6; row(b3,[e]) } else if(!withM.length){ const e=td((MS?'Este mes':'Esta '+PW)+' no se han declarado materiales.'); e.colSpan=6; row(b3,[e]) }
     withM.forEach(o=>{ const M=MAT[o.id]; M.forEach((m,i)=>{ const c=el('td'); if(!i) c.append(el('b',null,(o.work||'').replace(/\.$/,'')),el('br')); c.append(document.createTextNode((m.description||'—')+(Number(m.quantity||1)!==1?' × '+Number(m.quantity):'')));
@@ -277,6 +277,15 @@ function repSendOpen(){
     to.oninput=su.oninput=tx.oninput=cc.onchange=reinicia; /* cualquier cambio en destinatario, asunto, texto o copia exige confirmar otra vez */
     box.append(card) });
   document.body.append(ov) }
+/* Bloque 4 · Aviso interno (no forma parte del informe ni del PDF): lo declarado por el técnico frente al justificante de compra.
+   Importe declarado = líneas de material de la orden. Coste acreditado = justificantes aprobados. El importe a facturar lo decide AMJ. */
+function repMatCheck(L){ const conM=L.filter(o=>(MAT[o.id]||[]).length); if(!conM.length) return null; const box=el('div','repmsg repmat');
+  if(!CTX){ box.textContent=CTX===null?'Materiales: no se pueden comprobar los justificantes de compra (el servidor aún no ofrece ese dato). Revisa los importes antes de enviar.':'Materiales: comprobando justificantes…'; return box }
+  const filas=[]; conM.forEach(o=>{ const decl=MAT[o.id].reduce((a,m)=>a+Number(m.total||0),0), J=(CTX[o.id]&&CTX[o.id].justificantes)||[], ok=J.filter(j=>j.estado==='approved'), acr=ok.reduce((a,j)=>a+Number(j.aceptado!=null?j.aceptado:j.total||0),0);
+    const est=ok.length?'aprobado':J.some(j=>j.estado==='rejected')?'rechazado':J.length?'pendiente':'ausente', dif=Math.round((decl-acr)*100)/100;
+    if(est!=='aprobado') filas.push('AMJ-'+o.ref+': declarado '+eur2(decl)+' · justificante '+est); else if(Math.abs(dif)>=0.01) filas.push('AMJ-'+o.ref+': declarado '+eur2(decl)+' · acreditado con justificante '+eur2(acr)+' · diferencia '+eur2(dif)) });
+  if(!filas.length){ box.textContent='Materiales: los importes declarados coinciden con los justificantes aprobados.'; box.classList.add('ok'); return box }
+  box.append(el('b',null,'Materiales por revisar antes de enviar (este aviso no sale en el informe): '),document.createTextNode(filas.length+' de '+conM.length+' órdenes con materiales.')); const ul=el('ul'); filas.forEach(f=>ul.append(el('li',null,f))); box.append(ul); return box }
 const eur2=v=>Number(v||0).toLocaleString('es-ES',{minimumFractionDigits:2,maximumFractionDigits:2})+' €';
 /* ---------- datos ---------- */
 const STATUS={pending_review:['Pendiente de revisión','s-pending','new'],pending_assignment:['Pendiente de asignar','s-pending','new'],
@@ -544,7 +553,7 @@ const SECS={
    const L=repView?LA.filter(o=>repSel.has(o.id)):LA, SEL=!repView; updSel();
    const wrap=docs=>{ const w=el('div','repdoc rfw'); docs.forEach(d=>w.append(d)); return w };
    if(WK){ repEnsure(LA.map(o=>o.id)); repCtx();
-     if(repView) return [ctl,src('Así lo verá el cliente: el informe completo '+DELA+'.'),wrap(wcl.filter(c=>repSelW.has(c)).map(c=>repFmt(LA.filter(o=>o.cl===c),d0,d1,true,QN,MS,c)))];
+     if(repView){ const sel=wcl.filter(c=>repSelW.has(c)), chk=repMatCheck(LA.filter(o=>sel.includes(o.cl))); return [ctl].concat(chk?[chk]:[],[src('Así lo verá el cliente: el informe completo '+DELA+'.'),wrap(wcl.filter(c=>repSelW.has(c)).map(c=>repFmt(LA.filter(o=>o.cl===c),d0,d1,true,QN,MS,c)))]) }
      const card=el('div','repdoc'); card.append(el('h3','reph3','Informe '+ADJ+' · '+per));
      const tb=el('table','reptb sel wk'), hr=el('tr'); ['','Cliente','Órdenes finalizadas','Inmuebles','Materiales con IVA'].forEach((h,i)=>hr.append(el('th',i?null:'ck',h))); const th=el('thead'); th.append(hr); const bd=el('tbody');
      if(!wcl.length){ const r=el('tr'), e=el('td','empty','No hay órdenes terminadas '+(MS?'este mes':'esta '+PW)+'.'); e.colSpan=5; r.append(e); bd.append(r) }
@@ -583,7 +592,7 @@ const SECS={
      withM.forEach(o=>{ const M=MAT[o.id]; M.forEach((m,i)=>{ const tr=el('tr'); tr.append(el('td','b',i?'':'AMJ-'+o.ref+' · '+(o.piso||'')),el('td',null,m.description||'—'),el('td','r',String(Number(m.quantity||0))),el('td','r',eur2(m.unit_price)),el('td','r',eur2(m.subtotal)),el('td','r',eur2(m.iva)),el('td','r',eur2(m.total))); mb.append(tr) });
        const s=el('tr','sub'); const c=el('td',null,'Subtotal AMJ-'+o.ref); c.colSpan=4; s.append(c,el('td','r',eur2(M.reduce((a,m)=>a+Number(m.subtotal||0),0))),el('td','r',eur2(M.reduce((a,m)=>a+Number(m.iva||0),0))),el('td','r',eur2(M.reduce((a,m)=>a+Number(m.total||0),0)))); mb.append(s) });
      if(loaded&&withM.length){ const all=withM.flatMap(o=>MAT[o.id]); const t=el('tr','tot'); const c=el('td',null,'TOTAL MATERIALES DE LA SEMANA'); c.colSpan=4; t.append(c,el('td','r',eur2(all.reduce((a,m)=>a+Number(m.subtotal||0),0))),el('td','r',eur2(all.reduce((a,m)=>a+Number(m.iva||0),0))),el('td','r',eur2(all.reduce((a,m)=>a+Number(m.total||0),0)))); mb.append(t) }
-     mt.append(mb); doc.append(mt, el('div','repnote','Materiales al precio de compra del técnico, sin recargo.'));
+     mt.append(mb); doc.append(mt, el('div','repnote','Materiales declarados por los técnicos.'));
      /* abiertas */
      const open=real().filter(o=>!['completed','cancelled'].includes(o.st)&&(!repCl||o.cl===repCl)&&dayOf(o.ca)<=d1);
      if(open.length){ doc.append(el('h3','reph3','Órdenes abiertas al cierre de la semana')); const ot=el('table','reptb'), oh=el('tr'); ['Orden','Código piso','Trabajo','Estado'].forEach(h=>oh.append(el('th',null,h))); const oth=el('thead'); oth.append(oh); ot.append(oth); const ob=el('tbody');
