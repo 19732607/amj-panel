@@ -120,6 +120,9 @@ function repFmt(L,d0,d1,WK,QN,MS){ const addD0=(d,n)=>{ const x=new Date(d+'T12:
   if(WK&&help){ /* cupo */
     doc.append(H('Visitas y saldo del cupo de '+fd(d1,{month:'long'}))); const prev=new Set(hv.filter(o=>dayOf(o.sa)<d0).map(vkey)).size;
     const p=el('p','rf-intro',(live?'A fecha de ':'Al cierre del ')+dm(dc)+': '+cupo+' avisos consumidos de 100 y '+Math.max(100-cupo,0)+' disponibles. Cupo: 1 inmueble + día de inicio = 1 aviso.'); doc.append(p);
+    { const inPer=hv.filter(o=>dayOf(o.sa)>=d0), g={}; inPer.forEach(o=>{ (g[vkey(o)]=g[vkey(o)]||[]).push(o) }); const multi=Object.values(g).filter(a=>a.length>1).sort((a,b)=>dayOf(a[0].sa)<dayOf(b[0].sa)?-1:1);
+      if(multi.length){ const lista=a=>{ const r=a.map(o=>'AMJ-'+o.ref).sort(); return r.length>1?r.slice(0,-1).join(', ')+' y '+r[r.length-1]:r[0] };
+        const q=el('p','rf-intro'); q.append(el('b',null,inPer.length+' órdenes atendidas en '+Object.keys(g).length+' visitas. '),document.createTextNode('Varias órdenes en un mismo inmueble y día cuentan como 1 aviso: '+multi.map(a=>code(a[0])+' el '+dm(dayOf(a[0].sa))+' ('+lista(a)+')').join('; ')+'.')); doc.append(q) } }
     const [t2,b2]=table(['Fecha','Órdenes / visitas','Avisos consumidos']); const byD={}; hv.filter(o=>dayOf(o.sa)>=d0).forEach(o=>{ const d=dayOf(o.sa); (byD[d]=byD[d]||[]).push(o) });
     Object.keys(byD).sort().forEach(d=>row(b2,[dm(d),byD[d].sort((x,y)=>x.ref-y.ref).map(o=>'AMJ-'+o.ref).join(', '),String(new Set(byD[d].map(vkey)).size)]));
     if(d0>m0) row(b2,['Hasta '+dm(new Date(new Date(d0+'T12:00:00')-864e5).toLocaleDateString('sv-SE')),'Saldo anterior del mes',String(prev)]);
