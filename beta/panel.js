@@ -357,11 +357,14 @@ function nwForm(){
   g.append(el('div','nwh3','Fotos'));
   NW.photos=NW.photos||[]; NW.photos=[];
   const zone=el('div','ph'); zone.tabIndex=0;
-  const zt=el('div',null,'Lo más rápido: en WhatsApp (u otra app) haz clic derecho en la foto → «Copiar imagen» y pulsa Ctrl + V aquí. Puedes pegar una detrás de otra, hasta 20. Desde una carpeta del ordenador también puedes arrastrarlas. En el móvil usa «Añadir fotos».');
+  const zt=el('div',null,'Lo más rápido: en WhatsApp (u otra app) haz clic derecho en la foto → «Copiar imagen». Después haz clic derecho dentro de este recuadro → «Pegar» (o pulsa Ctrl + V). Puedes pegar una detrás de otra, hasta 20. Desde una carpeta del ordenador también puedes arrastrarlas. En el móvil usa «Añadir fotos».');
   const fi=el('input'); fi.type='file'; fi.accept='image/*'; fi.multiple=true; fi.hidden=true;
   const pb=el('button','pb','📷 Añadir fotos'); pb.type='button'; pb.onclick=e=>{ e.preventDefault(); fi.click() };
   const pp=el('button','pb','📋 Pegar foto'); pp.type='button'; pp.style.marginLeft='8px';
   const zm=el('div','src'); zm.style.margin='8px 0 0';
+  /* recuadro editable para que el clic derecho muestre «Pegar»; no deja escribir texto */
+  zone.contentEditable='true'; [zt,pb,pp,zm].forEach(x=>x.contentEditable='false');
+  zone.addEventListener('beforeinput',e=>e.preventDefault()); zone.addEventListener('drop',e=>e.preventDefault());
   zone.append(zt,pb,pp,zm); g.append(zone,fi);
   const thumbs=el('div','thumbs'); g.append(thumbs);
   function addFiles(files,why){ let n=0; [...files].filter(f=>f&&/^image\//.test(f.type)).forEach(f=>{ if(NW.photos.length>=20) return; NW.photos.push({f,url:URL.createObjectURL(f)}); n++ }); drawThumbs();
@@ -455,7 +458,7 @@ document.addEventListener('drop',async e=>{ if($('nw').hidden||!NW.addFiles) ret
   if(!files.length&&dt){ const urls=new Set(); (dt.getData('text/uri-list')||'').split(/\r?\n/).forEach(u=>{ if(u&&!u.startsWith('#')) urls.add(u.trim()) });
     const h=dt.getData('text/html')||''; (h.match(/<img[^>]+src="([^"]+)"/gi)||[]).forEach(m=>urls.add(m.replace(/.*src="([^"]+)".*/i,'$1').replace(/&amp;/g,'&')));
     for(const u of urls){ try{ const r=await fetch(u); const bl=await r.blob(); if(/^image\//.test(bl.type)) files.push(new File([bl],'foto.'+bl.type.split('/')[1],{type:bl.type})) }catch(err){} } }
-  NW.addFiles(files,'Esa aplicación no deja arrastrar la foto al navegador (WhatsApp lo bloquea). Haz clic derecho en la foto → «Copiar imagen» y pulsa Ctrl + V aquí.') },true);
+  NW.addFiles(files,'Esa aplicación no deja arrastrar la foto al navegador (WhatsApp lo bloquea). Haz clic derecho en la foto → «Copiar imagen» y luego clic derecho en el recuadro de fotos → «Pegar».') },true);
 $('fab').onclick=nwOpen; $('nwx').onclick=nwClose; $('nw').onclick=e=>{ if(e.target===$('nw')) nwClose() };
 session=loadSession(); if(session) start();
 })();
