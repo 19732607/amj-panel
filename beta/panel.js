@@ -232,6 +232,32 @@ async function repCall(body){ const r=await fetch(SB+'/functions/v1/amj-informes
 const repSha=async u=>[...new Uint8Array(await crypto.subtle.digest('SHA-256',u))].map(x=>x.toString(16).padStart(2,'0')).join('');
 let repLibera=[]; /* archivos (direcciones blob) de la ventana de envío, para liberarlos al cerrarla */
 function repSendClose(){ const o=$('rpm'); if(o) o.remove(); repLibera.forEach(u=>{ try{ URL.revokeObjectURL(u) }catch(e){} }); repLibera=[] }
+/* Envíos sin confirmar (segunda revisión, punto 4): el servidor guarda el envío y su PDF sellado; al recargar o reabrir el panel se pueden ver y retomar. */
+let PEND, pendP;
+function repPend(force){ if(force){ pendP=null } if(pendP) return pendP; return pendP=repCall({accion:'pendientes'}).then(j=>{ const a=j.envios||[], antes=(PEND||[]).length; PEND=a; if(a.length!==antes&&sec==='informes'&&!$('rpm')) renderSec() }).catch(()=>{ PEND=PEND||[] }) }
+function repPendOpen(){ repSendClose(); const fdl=d=>d.slice(8,10)+'/'+d.slice(5,7)+'/'+d.slice(0,4);
+  const ov=el('div','rpm'); ov.id='rpm'; const box=el('div','rpmb'); ov.append(box); const hd=el('div','rpmh'); const x=el('button','out','✕ Cerrar'); x.onclick=()=>{ repSendClose(); if(sec==='informes') renderSec() }; hd.append(el('h3',null,'Envíos sin confirmar'),x); box.append(hd);
+  box.append(el('div','rpmw','Estos envíos se pidieron y no llegó la confirmación del servicio de correo. Se guardó el PDF exacto de cada uno. «Reintentar el mismo envío» usa ese mismo PDF y la misma referencia: si el correo ya había salido, no se duplica.'));
+  (PEND||[]).forEach(e=>{ const card=el('div','rpmc'); card.dataset.clave=e.clave; card.append(el('h4',null,'Informe '+e.tipo+' · '+clName(e.cliente)+' · '+(e.desde===e.hasta?fdl(e.desde):fdl(e.desde)+' – '+fdl(e.hasta))));
+    const dato=(a,b)=>{ const d=el('div','rpmh2'); d.append(el('b',null,a+': '),document.createTextNode(b)); card.append(d) };
+    dato('Para',e.para.join(', ')+(e.copia?' · copia a '+e.copia:'')); dato('Asunto',e.asunto); dato('Pedido el',new Date(e.creado).toLocaleString('es-ES',{dateStyle:'short',timeStyle:'short'}));
+    dato('Estado',e.caducado?'caducado (más de 23 horas)':e.estado==='pendiente'?'en curso en el servicio de correo':'sin respuesta: no se sabe si salió'); dato('Archivo',e.archivo+' · '+(e.bytes/1048576).toFixed(1).replace('.',',')+' MB · huella '+e.sha256.slice(0,12)+'…');
+    const st=el('div','rpms'), say=(t,k)=>{ st.textContent=t; st.className='rpms'+(k?' '+k:'') };
+    if(e.caducado){ say('Han pasado más de 23 horas: el PDF guardado se ha eliminado y ya no se puede garantizar que un reintento no se duplique. Comprueba en la copia de AMJ si llegó; para enviarlo de nuevo, genera el informe y cambia el asunto.','err'); card.append(st); box.append(card); return }
+    const bar=el('div','rpma'), bv=el('button','out','📄 Ver el PDF guardado'), bs=el('button','go','↻ Reintentar el mismo envío'), fot=el('div','rpmf'), busy=b=>{ bv.disabled=bs.disabled=b }; bar.append(bv,bs); card.append(bar,fot,st);
+    bv.onclick=async()=>{ busy(true); say('Recuperando el PDF guardado…');
+      try{ const j=await repCall({accion:'recuperar',clave:e.clave}); const bin=atob(j.pdf_b64), u=new Uint8Array(bin.length); for(let i=0;i<bin.length;i++) u[i]=bin.charCodeAt(i);
+        if(await repSha(u)!==e.sha256||u.length!==e.bytes) throw new Error('el archivo recuperado no coincide con el registrado');
+        const url=URL.createObjectURL(new Blob([u],{type:'application/pdf'})); repLibera.push(url); fot.textContent=''; const dl=el('a','rpmlk','Descargar este PDF'); dl.href=url; dl.download=e.archivo; fot.append(dl);
+        say('Este es el PDF que se adjuntó en el intento (huella '+e.sha256.slice(0,12)+'…).','ok'); const old=card.querySelector('.rpmv'); if(old) old.remove(); const host=el('div','rpmv'); card.append(host); box.classList.add('wide');
+        try{ await repPdfView(u,host) }catch(e2){ host.textContent='No se pudo mostrar aquí el PDF ('+e2.message+'). Usa «Descargar este PDF».' } }
+      catch(er){ say('No se pudo recuperar el PDF: '+er.message,'err') } finally{ busy(false) } };
+    bs.onclick=async()=>{ if(bs.dataset.ok!=='1'){ bs.dataset.ok='1'; bs.textContent='↻ Confirmar: reintentar el envío a '+e.para.join(', '); say('Pulsa otra vez para confirmar. Se usará el mismo PDF y la misma referencia de envío.'); return }
+      busy(true); say('Reintentando…');
+      try{ const j=await repCall({accion:'reintentar',clave:e.clave}); say((j.ya_enviado?'Ya constaba como enviado: no se ha repetido. ':'Enviado a '+j.para.join(', ')+'. ')+'Adjunto '+j.archivo+' (huella '+j.sha256.slice(0,12)+'…).','ok'); bs.textContent='✓ Enviado'; bv.disabled=false; repPend(true) }
+      catch(er){ busy(false); bs.dataset.ok=''; bs.textContent='↻ Reintentar el mismo envío'; say((er.codigo==='ENVIO_DESHABILITADO'?'Versión de pruebas: el envío real está apagado. El envío guardado y su PDF son correctos. ':'')+er.message,'err'); if(['ENVIO_NO_ENCONTRADO','ENVIO_INCIERTO_ANTIGUO','PDF_NO_DISPONIBLE'].includes(er.codigo)){ bs.disabled=true; repPend(true) } } };
+    box.append(card) });
+  document.body.append(ov) }
 function repSendOpen(){
   const docs=[...document.querySelectorAll('#obody .rf')].filter(d=>d._rep); if(!docs.length) return;
   if(!CTX||docs.some(d=>!d._rep.ids.every(id=>CTX[id]&&CTX[id].mat_informe))){ repMsg=CTX===undefined?'Todavía se están comprobando los importes con el servidor. Espera unos segundos y vuelve a pulsar «Enviar por email».':'No se puede enviar: el servidor no ha dado el importe de materiales de todas las órdenes del informe.'; renderSec(); return }
@@ -248,7 +274,7 @@ function repSendOpen(){
     const to=fld('Para (correo del cliente; varios separados por coma)',el('input')); to.type='text'; to.value=saved; to.placeholder='nombre@cliente.com'; to.autocomplete='off';
     const su=fld('Asunto',el('input')); su.type='text'; su.value=nombre+' · '+(R.tipo==='diario'?fdl(R.d0):R.per);
     const tx=fld('Texto del correo',el('textarea')); tx.rows=9; tx.value='Buenas tardes,\n\nAdjuntamos el informe '+R.tipo+' de servicio de '+R.cname+' '+perTxt+'.\n\nEn el PDF encontrará el detalle de las intervenciones por inmueble, con el informe del técnico y las fotografías de cada trabajo'+(R.mat?', y la relación de materiales':'')+'.\n\nQuedamos a su disposición para cualquier aclaración.\n\nUn saludo,\nAntonio Martins Junior\nAMJ Maintenance · Asset maintenance, just in time';
-    const cc=el('input'); cc.type='checkbox'; cc.checked=true; const ccl=el('label','rpmk'); ccl.append(cc,document.createTextNode(' Enviarme una copia a '+REP_COPIA)); card.append(ccl);
+    const cc=el('input'); cc.type='checkbox'; cc.checked=false; /* la copia a AMJ se marca sola al comprobar el PDF, salvo en la versión de pruebas (solo destinatarios ficticios) */ const ccl=el('label','rpmk'), cct=el('span',null,' Enviarme una copia a '+REP_COPIA); ccl.append(cc,cct); card.append(ccl);
     const st=el('div','rpms'), bar=el('div','rpma'), bv=el('button','out','📄 Ver el PDF que se enviará'), bs=el('button','go','✉ Enviar ahora'); bar.append(bv,bs); card.append(bar,st);
     const base=()=>({docs:[model],logo,archivo,informe:{cliente:R.cl,tipo:R.tipo,desde:R.d0,hasta:R.d1,corte:R.dc,refs:R.refs}}), say=(t,k)=>{ st.textContent=t; st.className='rpms'+(k?' '+k:'') }, busy=b=>{ bv.disabled=bs.disabled=b };
     /* Un solo PDF: el que se genera en «Ver» es el que se ve, se descarga y se adjunta. `prev` guarda esos bytes y el sello del servidor. */
@@ -259,7 +285,7 @@ function repSendOpen(){
       if(f.faltan){ fot.classList.add('warn'); fot.append(el('div',null,'Faltan en: '+f.detalle.map(d=>d.titulo.split(' · ')[0]+' ('+d.n+')').join(', ')+'. Si las necesitas, cierra, espera y vuelve a generar el PDF.')) }
       if(prev.cliente) fot.append(el('div',null,'Cliente comprobado por el servidor: '+prev.cliente.nombre+' · '+R.refs.length+(R.refs.length===1?' orden':' órdenes')+', todas suyas.'));
       if((prev.prefijo||[]).length){ fot.classList.add('warn'); fot.append(el('div',null,'Órdenes identificadas solo por el código del inmueble (sin ficha de cliente): '+prev.prefijo.map(r=>'AMJ-'+r).join(', ')+'.')) }
-      const D=prev.dest; if(D){ const dd=el('div','rpmd');
+      const D=prev.dest; if(D){ const dd=el('div','rpmd'); if(D.solo_ficticios){ cc.checked=false; cc.disabled=true; cct.textContent=' Sin copia: en la versión de pruebas no se envía nada a correos reales ('+REP_COPIA+').' } else if(!cc.dataset.t){ cc.checked=true }
         if(D.solo_ficticios) dd.textContent='Versión de pruebas: solo se admiten destinatarios ficticios (por ejemplo, nombre@prueba.example).';
         else if(!D.autorizados.length){ fot.classList.add('warn'); dd.textContent='Este cliente no tiene destinatarios autorizados. Hay que darlos de alta antes de poder enviar.' }
         else { dd.append(document.createTextNode('Destinatarios autorizados de este cliente: '+D.autorizados.join(', ')+'. ')); const u=el('a','rpmlk','Usar estos'); u.href='#'; u.onclick=ev=>{ ev.preventDefault(); to.value=D.autorizados.join(', '); reinicia() }; dd.append(u) }
@@ -291,15 +317,15 @@ function repSendOpen(){
       if(bs.dataset.ok!=='1'&&!incierto){ bs.dataset.ok='1'; bs.textContent='✉ Confirmar: enviar a '+para.join(', '); say('Pulsa otra vez para confirmar el envío a '+para.join(', ')+(prev.fotos.faltan?'. Atención: en el PDF faltan '+prev.fotos.faltan+' fotos.':'.')); return }
       busy(true); say('Enviando…');
       try{ const j=await repCall({accion:'enviar',sello:prev.sello,pdf_b64:prev.b64,para,copia:cc.checked?REP_COPIA:'',asunto:su.value.trim(),texto:tx.value.trim()}); try{ localStorage.setItem(KEY2,para.join(', ')) }catch(e){}
-        if(j.registro_pendiente){ incierto=true; busy(false); bs.dataset.ok='1'; bs.textContent='↻ Reintentar el mismo envío'; say(j.aviso||'El correo ha salido, pero no ha quedado anotado. Pulsa «Reintentar el mismo envío»: no se enviará otra vez.','err'); return }
-        incierto=false; say('Enviado a '+j.para.join(', ')+(cc.checked?' · copia a '+REP_COPIA:'')+' · adjunto '+j.archivo+' (huella '+j.sha256.slice(0,12)+'…).','ok'); bs.textContent='✓ Enviado'; bv.disabled=false; [to,su,tx,cc].forEach(i=>i.disabled=true) }
+        if(j.registro_pendiente){ incierto=true; repPend(true); busy(false); bs.dataset.ok='1'; bs.textContent='↻ Reintentar el mismo envío'; say(j.aviso||'El correo ha salido, pero no ha quedado anotado. Pulsa «Reintentar el mismo envío»: no se enviará otra vez.','err'); return }
+        incierto=false; repPend(true); say('Enviado a '+j.para.join(', ')+(cc.checked?' · copia a '+REP_COPIA:'')+' · adjunto '+j.archivo+' (huella '+j.sha256.slice(0,12)+'…).','ok'); bs.textContent='✓ Enviado'; bv.disabled=false; [to,su,tx,cc].forEach(i=>i.disabled=true) }
       catch(e){ busy(false);
-        if(e.codigo==='RESULTADO_INCIERTO'||(!e.http&&!e.codigo)){ incierto=true; bs.dataset.ok='1'; bs.textContent='↻ Reintentar el mismo envío'; say('No se sabe si el correo ha salido: no llegó la respuesta. Pulsa «Reintentar el mismo envío» sin cambiar nada; si ya había salido, no se duplicará.','err') }
+        if(e.codigo==='RESULTADO_INCIERTO'||(!e.http&&!e.codigo)){ incierto=true; repPend(true); bs.dataset.ok='1'; bs.textContent='↻ Reintentar el mismo envío'; say('No se sabe si el correo ha salido: no llegó la respuesta. Pulsa «Reintentar el mismo envío» sin cambiar nada; si ya había salido, no se duplicará.','err') }
         else if(e.codigo==='ENVIO_DESHABILITADO'){ bs.dataset.ok=''; bs.textContent='✉ Enviar ahora'; say('Versión de pruebas: el envío real está deshabilitado. El PDF y los datos del envío se han comprobado y son correctos (huella '+(e.j.sha256||'').slice(0,12)+'…).') }
-        else if(e.codigo==='EN_CURSO'){ incierto=true; bs.dataset.ok='1'; bs.textContent='↻ Reintentar el mismo envío'; say(e.message,'err') }
+        else if(e.codigo==='EN_CURSO'){ incierto=true; repPend(true); bs.dataset.ok='1'; bs.textContent='↻ Reintentar el mismo envío'; say(e.message,'err') }
         else if(['ENVIO_PENDIENTE_OTRO_PDF','YA_ENVIADO_OTRO_PDF','ENVIO_INCIERTO_ANTIGUO'].includes(e.codigo)){ bs.dataset.ok=''; bs.textContent='✉ Enviar ahora'; say('No se envió: '+e.message,'err') }
         else { if(e.http===409){ prev=null; pintaFotos(); const v=card.querySelector('.rpmv'); if(v) v.remove() } bs.dataset.ok=''; bs.textContent='✉ Enviar ahora'; say('No se envió: '+e.message,'err') } } };
-    to.oninput=su.oninput=tx.oninput=cc.onchange=reinicia; /* cualquier cambio en destinatario, asunto, texto o copia exige confirmar otra vez */
+    to.oninput=su.oninput=tx.oninput=reinicia; cc.onchange=()=>{ cc.dataset.t='1'; reinicia() }; /* cualquier cambio en destinatario, asunto, texto o copia exige confirmar otra vez */
     box.append(card) });
   document.body.append(ov) }
 /* Bloque 4 · Aviso interno (no forma parte del informe ni del PDF): lo declarado por el técnico frente al justificante de compra.
@@ -575,6 +601,7 @@ const SECS={
    bEnv.onclick=()=>{ repMsg=''; if(!repView){ repView=true; repAuto=true; renderSec(); return } repSendOpen() };
    if(repAuto){ repAuto=false; setTimeout(repSendOpen,0) }
    const row=el('div','repbar'); if(repView) row.append(bBack,bEnv); else row.append(scl,prev,dIn,next,bVer,bEnv); ctl.append(seg,row); if(repMsg) ctl.append(el('div','repmsg',repMsg));
+   repPend(); if(PEND&&PEND.length){ const pb=el('div','repmsg reppend'), b=el('button','out','Ver y retomar'); b.onclick=repPendOpen; pb.append(document.createTextNode((PEND.length===1?'Hay 1 envío de informe sin confirmar. ':'Hay '+PEND.length+' envíos de informes sin confirmar. ')),b); ctl.append(pb) }
    /* periodo */
    let d0=repDay, d1=repDay; if(WK){ const wd=(new Date(repDay+'T12:00:00').getDay()+6)%7; d0=addD(repDay,-wd); d1=addD(d0,6) }
    if(MS){ const a=repDay.slice(0,8); d0=a+'01'; d1=addD(addD(a+'28',4).slice(0,8)+'01',-1) }
@@ -804,7 +831,7 @@ function nwSummary(){
 
 /* ---------- arranque ---------- */
 function start(){ $('login').hidden=true; $('app').hidden=false; $('fab').hidden=false; load(); clearInterval(timer); timer=setInterval(()=>{ load(); liveLabel() },POLL) }
-function logout(){ clearSession(); clearInterval(timer); O=[]; prevRev={}; lastOk=0; $('app').hidden=true; $('login').hidden=false; $('fab').hidden=true; nwClose(); repSendClose(); /* al salir se cierra la ventana del informe y se liberan sus archivos */ repSel=new Set(); repSelW=new Set(); repView=false; CTX=undefined; PERS=undefined; for(const k in MED) delete MED[k]; for(const k in MAT) delete MAT[k]; for(const k in THU){ try{ if(typeof THU[k]==='string'&&THU[k].startsWith('blob:')) URL.revokeObjectURL(THU[k]) }catch(e){} delete THU[k] } }
+function logout(){ clearSession(); clearInterval(timer); O=[]; prevRev={}; lastOk=0; $('app').hidden=true; $('login').hidden=false; $('fab').hidden=true; nwClose(); repSendClose(); /* al salir se cierra la ventana del informe y se liberan sus archivos */ repSel=new Set(); repSelW=new Set(); repView=false; CTX=undefined; PERS=undefined; PEND=undefined; pendP=null; for(const k in MED) delete MED[k]; for(const k in MAT) delete MAT[k]; for(const k in THU){ try{ if(typeof THU[k]==='string'&&THU[k].startsWith('blob:')) URL.revokeObjectURL(THU[k]) }catch(e){} delete THU[k] } }
 $('lf').addEventListener('submit',async e=>{ e.preventDefault(); $('lerr').textContent=''; $('lb').disabled=true;
   try{ const em=$('le').value.trim().toLowerCase(); const j=await auth('token?grant_type=password',{email:em,password:$('lp').value});
     saveSession({access_token:j.access_token,refresh_token:j.refresh_token,expires_at:Date.now()+j.expires_in*1000,email:em},$('lr').checked); $('lp').value=''; start() }

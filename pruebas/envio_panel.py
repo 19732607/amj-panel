@@ -24,11 +24,18 @@ ok = lambda c, m: (print("OK ·", m) if c else (_ for _ in ()).throw(AssertionEr
 async def main():
     async with async_playwright() as p:
         b = await p.chromium.launch(); pg = await b.new_page(viewport={"width": 1300, "height": 950}); errores = []; pg.on("pageerror", lambda e: errores.append(str(e)))
-        llamadas, modo = [], {"enviar": "ok"}
+        llamadas, modo, pend, retoma = [], {"enviar": "ok", "ficticios": False}, [], []
         async def funcion(route):
-            cuerpo = json.loads(route.request.post_data); llamadas.append(cuerpo)
+            cuerpo = json.loads(route.request.post_data)
+            # envíos sin confirmar guardados en el servidor (segunda revisión, punto 4)
+            if cuerpo["accion"] == "pendientes": return await route.fulfill(json={"ok": True, "envio_real": True, "envios": pend})
+            if cuerpo["accion"] in ("recuperar", "reintentar"):
+                retoma.append(cuerpo); e = next(x for x in pend if x["clave"] == cuerpo["clave"])
+                if cuerpo["accion"] == "recuperar": return await route.fulfill(json={"ok": True, "archivo": e["archivo"], "bytes": len(PDF), "sha256": SHA, "clave": e["clave"], "pdf_b64": base64.b64encode(PDF).decode()})
+                pend.clear(); return await route.fulfill(json={"ok": True, "enviado": True, "recuperado": True, "para": e["para"], "proveedor": "correo-1", "archivo": e["archivo"], "bytes": len(PDF), "sha256": SHA, "clave": e["clave"]})
+            llamadas.append(cuerpo)
             if cuerpo["accion"] == "pdf":
-                return await route.fulfill(json={"ok": True, "enviado": False, "paginas": 1, "bytes": len(PDF), "archivo": "Informe_ficticio.pdf", "sha256": SHA, "caduca": 9e15, "sello": "SELLO.FICTICIO", "cliente": {"codigo": "FICTICIO", "nombre": "Cliente Ficticio"}, "ordenes_por_prefijo": [902], "destinatarios": {"autorizados": ["destinatario@prueba.example"], "solo_ficticios": False},
+                return await route.fulfill(json={"ok": True, "enviado": False, "paginas": 1, "bytes": len(PDF), "archivo": "Informe_ficticio.pdf", "sha256": SHA, "caduca": 9e15, "sello": "SELLO.FICTICIO", "cliente": {"codigo": "FICTICIO", "nombre": "Cliente Ficticio"}, "ordenes_por_prefijo": [902], "destinatarios": {"autorizados": ["destinatario@prueba.example"], "solo_ficticios": modo["ficticios"]},
                     "fotos": {"solicitadas": 2, "incluidas": 1, "faltan": 1, "detalle": [{"titulo": "AMJ-902 · Trabajo ficticio 2 · P2", "n": 1}]}, "pdf_b64": base64.b64encode(PDF).decode()})
             m = modo["enviar"]
             if m == "incierto": return await route.fulfill(status=504, json={"error": "sin respuesta", "codigo": "RESULTADO_INCIERTO"})
@@ -74,12 +81,36 @@ async def main():
         ok("No se sabe si el correo ha salido" in await estado(), "respuesta perdida: se muestra como resultado incierto")
         modo["enviar"] = "ok"; await enviar.click(); await pg.wait_for_function("document.querySelector('.rpma .go').textContent.includes('Enviado')")
         e1, e2 = llamadas[1], llamadas[2]
+        ok(e1["copia"] == "antonio@amjmaintenance.es", "con envío real, la copia a AMJ queda marcada al comprobar el PDF")
         ok(e1 == e2, "el reintento envía exactamente la misma petición")
         ok(hashlib.sha256(base64.b64decode(e2["pdf_b64"])).hexdigest() == SHA and e2["sello"] == "SELLO.FICTICIO" and "docs" not in e2, "al enviar viajan los bytes revisados y su sello; no se vuelve a generar el informe")
         ok(SHA[:12] in await estado(), "el mensaje final muestra la huella del adjunto")
         await pg.evaluate("()=>__t('repSendOpen()')"); await pg.fill(".rpml input >> nth=0", "destinatario@prueba.example"); await ver.click(); await pg.wait_for_selector(".rpmv canvas")
         modo["enviar"] = "distinto"; await enviar.click(); await enviar.click(); await pg.wait_for_function("document.querySelector('.rpms').textContent.includes('No se envió')")
         ok(await pg.locator(".rpmv").count() == 0 and "Ver el PDF que se enviará" in await estado(), "si el servidor rechaza el archivo, se retira la vista previa y se explica cómo seguir")
+        # --- Segunda revisión, punto 4: en la versión de pruebas (solo ficticios) no hay copia por defecto a un correo real.
+        modo["ficticios"] = True; modo["enviar"] = "ok"; n0 = len(llamadas)
+        await pg.evaluate("()=>__t('repSendOpen()')"); await pg.fill(".rpml input >> nth=0", "destinatario@prueba.example")
+        ok(not await pg.is_checked(".rpmk input"), "revisión 2 · la copia no viene marcada antes de saber el modo del servidor")
+        await ver.click(); await pg.wait_for_selector(".rpmv canvas")
+        ok(not await pg.is_checked(".rpmk input") and await pg.is_disabled(".rpmk input") and "no se envía nada a correos reales" in await pg.inner_text(".rpmk"), "revisión 2 · modo ficticio: la copia a un correo real queda desmarcada y bloqueada")
+        await enviar.click(); await enviar.click(); await pg.wait_for_function("document.querySelector('.rpma .go').textContent.includes('Enviado')")
+        ok(llamadas[-1]["accion"] == "enviar" and llamadas[-1]["copia"] == "" and len(llamadas) == n0 + 2, "revisión 2 · modo ficticio: la petición de envío viaja sin copia")
+        # --- Cierre y reapertura del panel: el envío sin confirmar y su PDF se recuperan del servidor, sin nada guardado en el navegador.
+        pend.append({"clave": "amj-informe-ficticia", "cliente": "FICT", "tipo": "diario", "desde": "2026-11-19", "hasta": "2026-11-19", "para": ["destinatario@prueba.example"], "copia": "", "asunto": "Informe diario ficticio",
+                     "archivo": "Informe_ficticio.pdf", "sha256": SHA, "bytes": len(PDF), "estado": "incierto", "creado": "2026-11-19T17:00:00Z", "caducado": False})
+        await pg.reload(); await pg.evaluate(PREPARA); await pg.evaluate("()=>__t('repSendClose()')"); await pg.wait_for_selector(".reppend")
+        ok("Hay 1 envío de informe sin confirmar" in await pg.inner_text(".reppend") and await pg.evaluate("()=>__t('repLibera.length')") == 0, "revisión 2 · tras recargar el panel se avisa del envío sin confirmar (dato del servidor)")
+        await pg.click(".reppend button"); t = await pg.inner_text("#rpm")
+        ok("Informe diario ficticio" in t and "destinatario@prueba.example" in t and "sin respuesta: no se sabe si salió" in t and SHA[:12] in t, "revisión 2 · se ven destinatario, asunto, estado y huella del envío guardado")
+        await pg.click(".rpma .out"); await pg.wait_for_selector(".rpmv canvas")
+        descarga = await pg.evaluate("async()=>{ const a=document.querySelector('.rpmf a[download]'); const u=new Uint8Array(await (await fetch(a.href)).arrayBuffer()); const h=await crypto.subtle.digest('SHA-256',u); return [a.download,[...new Uint8Array(h)].map(x=>x.toString(16).padStart(2,'0')).join('')] }")
+        ok(descarga == ["Informe_ficticio.pdf", SHA] and retoma[-1] == {"accion": "recuperar", "clave": "amj-informe-ficticia"}, "revisión 2 · el PDF recuperado es el sellado (misma huella en visor y descarga)")
+        await pg.click(".rpma .go"); ok("Confirmar" in await pg.inner_text(".rpma .go") and len(retoma) == 1, "revisión 2 · reintentar pide confirmación")
+        await pg.click(".rpma .go"); await pg.wait_for_function("document.querySelector('.rpma .go').textContent.includes('Enviado')")
+        ok(retoma[-1] == {"accion": "reintentar", "clave": "amj-informe-ficticia"} and len(llamadas) == n0 + 2, "revisión 2 · el reintento manda solo la referencia del envío: el servidor usa su PDF guardado; no se genera ni se sube otro")
+        await pg.click(".rpmh button"); await pg.wait_for_function("!document.querySelector('.reppend')"); ok(True, "revisión 2 · confirmado el envío, el aviso desaparece")
+        await pg.evaluate("()=>__t('repSendOpen()')")
         await pg.evaluate("()=>__t('logout()')"); ok(await pg.locator("#rpm").count() == 0 and await pg.evaluate("()=>__t('repLibera.length+Object.keys(MED).length+Object.keys(MAT).length')") == 0, "al cerrar sesión se cierra la ventana y se liberan archivos, fotos y materiales")
         ok(not errores, "sin errores de JavaScript"); await b.close()
 asyncio.run(main()); srv.shutdown()

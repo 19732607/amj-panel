@@ -24,5 +24,16 @@ async def main():
         e = pg.locator(".rpma .go"); await e.click(); await e.click(); await pg.wait_for_function("document.querySelector('.rpma .go').textContent.includes('Enviado')")
         cap = json.loads(urllib.request.urlopen("http://127.0.0.1:54398/").read())[-1]
         print("vista previa y descarga :", vista); print("adjunto capturado       :", cap["sha256"], "·", cap["archivo"], "·", cap["para"]); print("fotos:", fotos.split("\\n")[0], "· páginas en el visor:", paginas)
-        assert vista == cap["sha256"] and not errores, (vista, cap, errores); assert "Cliente comprobado por el servidor: Cliente Ficticio" in fotos, fotos; print("OK · panel y función integrados: el adjunto es el archivo revisado y el cliente lo comprueba el servidor"); await b.close()
+        assert vista == cap["sha256"] and not errores, (vista, cap, errores); assert "Cliente comprobado por el servidor: Cliente Ficticio" in fotos, fotos; print("OK · panel y función integrados: el adjunto es el archivo revisado y el cliente lo comprueba el servidor")
+        # Segunda revisión: el informe MENSUAL real del panel (todos sus recuadros, detalle y fotos) pasa la comprobación completa del servidor,
+        # y un recuadro alterado en el navegador hace que el servidor se niegue a sellarlo.
+        await pg.route("**/rest/v1/rpc/amj_admin_informe_periodos", lambda r: r.fulfill(json=[]))
+        await pg.evaluate("()=>__t(`repSendClose(); repPer='mes'; repDay='2026-11-19'; repCl='FICT'; repSelW=new Set(['FICT']); repView=true; renderSec()`)"); await pg.wait_for_timeout(600); await pg.evaluate("()=>__t('repSendOpen()')")
+        await pg.fill(".rpml input >> nth=0", "destinatario@prueba.example"); await pg.locator(".rpma .out").first.click()
+        await pg.wait_for_function("document.querySelector('.rpmv canvas')||document.querySelector('.rpms.err')"); est = await pg.inner_text(".rpms")
+        rec = await pg.evaluate("()=>[...document.querySelectorAll('#obody .rf-kp > div')].map(d=>d.querySelector('b').textContent+' | '+d.querySelector('span').textContent)")
+        assert await pg.locator(".rpmv canvas").count() > 0, (est, rec); print("OK · informe mensual del panel aceptado entero por el servidor ·", len(rec), "recuadros recalculados:", "; ".join(rec))
+        await pg.evaluate("()=>{ __t('repSendClose()'); const d=[...document.querySelectorAll('#obody .rf-kp > div')].find(d=>d.textContent.includes('menos de 48 h')); d.querySelector('b').textContent='50 %'; __t('repSendOpen()') }")
+        await pg.fill(".rpml input >> nth=0", "destinatario@prueba.example"); await pg.locator(".rpma .out").first.click(); await pg.wait_for_function("document.querySelector('.rpms.err')"); est = await pg.inner_text(".rpms")
+        assert "no coincide con los datos del servidor" in est and await pg.locator(".rpmv canvas").count() == 0, est; print("OK · recuadro alterado en el navegador: el servidor no sella el PDF ·", est[:150]); await b.close()
 asyncio.run(main()); srv.shutdown()
