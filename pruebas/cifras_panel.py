@@ -77,5 +77,29 @@ async def main():
         await pg.evaluate("()=>__t('repSendOpen()')"); ok(await pg.locator("#rpm").count() == 0 and "No se han podido leer los periodos contractuales" in await pg.inner_text(".repmsg"), "revisión 3 · con ese fallo no se abre el envío: no se puede sellar")
         await pg.evaluate("()=>__t(`PERS=[]; renderSec()`)"); t = await pg.inner_text("#obody .rf")
         ok("No se han podido leer" not in t and "inmuebles atendidos" in t and await pg.evaluate("()=>document.querySelector('#obody .rf')._rep.bloqueo") == "", "revisión 3 · cliente que de verdad no tiene cupo (consulta correcta, sin periodos): informe normal con inmuebles atendidos, sin bloqueo")
+        # Regresión del ensayo de 182 fotos: todas comparten dirección; solo la ficha identifica el inmueble.
+        async def resumen_inmuebles(ids):
+            return await pg.evaluate("""ids => {
+                window.idsPrueba = ids;
+                return __t(`(() => {
+                    const muestra=window.idsPrueba.map((inmueble,i)=>{
+                        const o={...O[0],id:1000+i,ref:2000+i,piso:'',ad:'Una misma dirección'};
+                        CTX[o.id]={inmueble,cliente:'ENSO',mat_informe:{total:0}};
+                        MED[o.id]=[]; MAT[o.id]=[]; return o;
+                    });
+                    const doc=repModel(repFmt(muestra,'2026-10-19','2026-10-25',true,false,false,'ENSO'));
+                    return {recuadros:doc.blocks.find(b=>b.t==='tiles').items,
+                        notas:doc.blocks.filter(b=>b.t==='note').map(b=>b.x),
+                        barras:doc.blocks.find(b=>b.t==='bars').items};
+                })()`);
+            }""", ids)
+        lote = await resumen_inmuebles(([None, "", "   "] * 21)[:61])
+        ok(["61", "órdenes finalizadas"] in lote["recuadros"] and ["0", "inmuebles identificados"] in lote["recuadros"]
+           and "61 órdenes sin inmueble identificado." in lote["notas"] and lote["barras"] == [["Sin inmueble identificado", 61]],
+           "61 órdenes en una dirección sin identificadores: 0 inmuebles identificados y 61 pendientes")
+        mixto = await resumen_inmuebles([" P1 ", "P1", "P2", None])
+        ok(["2", "inmuebles identificados"] in mixto["recuadros"] and "1 orden sin inmueble identificado." in mixto["notas"]
+           and mixto["barras"] == [["P1", 2], ["P2", 1], ["Sin inmueble identificado", 1]],
+           "misma dirección, dos identificadores distintos y una orden pendiente")
         ok(not errores, "sin errores de JavaScript: " + "; ".join(errores)); await b.close()
 asyncio.run(main()); srv.shutdown()
