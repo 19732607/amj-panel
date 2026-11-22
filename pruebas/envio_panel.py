@@ -16,7 +16,7 @@ srv = http.server.ThreadingHTTPServer(("127.0.0.1", 8791), functools.partial(H, 
 PREPARA = """()=>{ __t(`session={access_token:'x',expires_at:Date.now()+9e9};
   O=normalize([1,2].map(i=>({id:i,reference:900+i,revision:1,status:'completed',service:'Fontanería',description:'FICT-P'+i+' | Trabajo ficticio '+i,address:'',locality:'Ciudad',
     created_at:'2026-11-18T09:00:00Z',started_at:'2026-11-19T09:00:00Z',finished_at:'2026-11-19T10:00:00Z',technician_name:'Nombre Apellido',technician_id:'t1',customer_name:'FICT',report:'Informe ficticio.'})));
-  computeTags(); RV=[]; [1,2].forEach(i=>{ MED[i]=[{id:'m'+i,object_path:'o/'+i+'.jpg'}]; THU['m'+i]='data:image/gif;base64,R0lGODlhAQABAAAAACw='; MAT[i]=[] });
+  computeTags(); RV=[]; CTX={}; [1,2].forEach(i=>{ CTX[i]={id:i,mat_informe:{total:0,fuente:'sin_materiales'}}; MED[i]=[{id:'m'+i,object_path:'o/'+i+'.jpg'}]; THU['m'+i]='data:image/gif;base64,R0lGODlhAQABAAAAACw='; MAT[i]=[] });
   document.querySelectorAll('[hidden]').forEach(e=>e.hidden=false); document.getElementById('nw').hidden=true; document.getElementById('login').style.display='none'; lastOk=1;
   sec='informes'; repPer='dia'; repDay='2026-11-19'; repCl=''; repSel=new Set([1,2]); repView=true; renderSec(); repSendOpen();`) }"""
 ok = lambda c, m: (print("OK ·", m) if c else (_ for _ in ()).throw(AssertionError(m)))
@@ -40,6 +40,11 @@ async def main():
             if fuente["modo"] == "falla": return await route.fulfill(status=500, json={"message": "caída"})
             if "amj_order_materials" in route.request.url: return await route.fulfill(json=[])
             return await route.fulfill(json=[{"id": "m%d" % i, "order_id": i, "object_path": "o/%d.jpg" % i} for i in (1, 2)] + ([{"id": "m9", "order_id": 2, "object_path": "o/9.jpg"}] if fuente["modo"] == "cambia" else []))
+        ctx = {"modo": "igual"}
+        async def contexto(route):
+            if ctx["modo"] == "falla": return await route.fulfill(status=500, json={"message": "caída"})
+            await route.fulfill(json=[{"id": 1, "mat_informe": {"total": 0, "fuente": "sin_materiales"}}, {"id": 2, "mat_informe": {"total": 9.5, "fuente": "autorizado"} if ctx["modo"] == "cambia" else {"total": 0, "fuente": "sin_materiales"}}])
+        await pg.route("**/rest/v1/rpc/amj_admin_informe_ordenes", contexto)
         await pg.route("**/rest/v1/amj_service_media*", datos); await pg.route("**/rest/v1/amj_order_materials*", datos)
         await pg.goto("http://127.0.0.1:8791/beta/index.html"); await pg.evaluate(PREPARA)
         estado = lambda: pg.inner_text(".rpms"); enviar = pg.locator(".rpma .go"); ver = pg.locator(".rpma .out").first
@@ -47,6 +52,11 @@ async def main():
         await enviar.click(); ok("Primero pulsa" in await estado() and not llamadas, "no deja enviar sin haber generado y revisado el PDF")
         fuente["modo"] = "falla"; await ver.click(); await pg.wait_for_function("document.querySelector('.rpms').textContent.includes('No se han podido releer')")
         ok(not llamadas, "bloque 2 · si no se pueden releer fotos y materiales, no se genera el PDF")
+        fuente["modo"] = "igual"; ctx["modo"] = "falla"; await ver.click(); await pg.wait_for_function("document.querySelector('.rpms').textContent.includes('importes de materiales')")
+        ok(not llamadas, "revisión · si el servidor no confirma los importes de materiales, no se genera el PDF")
+        ctx["modo"] = "cambia"; await ver.click(); await pg.wait_for_function("!document.getElementById('rpm')")
+        ok(not llamadas and "El importe de materiales de AMJ-902 ha cambiado" in await pg.inner_text("#obody"), "revisión · importe actualizado después de abrir el panel: se actualiza el informe y hay que revisarlo antes de sellar")
+        await pg.evaluate("()=>__t('repSendOpen()')"); await pg.fill(".rpml input >> nth=0", "destinatario@prueba.example")   # el contexto ya no cambia más
         fuente["modo"] = "cambia"; await ver.click(); await pg.wait_for_function("!document.getElementById('rpm')")
         ok(not llamadas and "AMJ-902 han cambiado" in await pg.inner_text("#obody") and await pg.evaluate("()=>__t('MED[2].length')") == 2, "bloque 2 · si una foto cambió, se actualiza el informe y se pide revisarlo antes de generar")
         await pg.evaluate("()=>__t('repSendOpen()')"); await pg.fill(".rpml input >> nth=0", "intruso@otro.example"); await ver.click(); await pg.wait_for_selector(".rpmv canvas")

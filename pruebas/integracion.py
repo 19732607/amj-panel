@@ -15,6 +15,7 @@ async def main():
             await route.fulfill(status=st, body=body, headers={"content-type": "application/json", "Access-Control-Allow-Origin": "*"})
         await pg.route("**/functions/v1/amj-informes-enviar", a_local)
         async def datos(route): await route.fulfill(json=[] if "amj_order_materials" in route.request.url else [{"id": "m%d" % i, "order_id": i, "object_path": "o/%d.jpg" % i} for i in (1, 2)])
+        await pg.route("**/rest/v1/rpc/amj_admin_informe_ordenes", lambda r: r.fulfill(json=[{"id": i, "mat_informe": {"total": 0, "fuente": "sin_materiales"}} for i in (1, 2)]))
         await pg.route("**/rest/v1/amj_service_media*", datos); await pg.route("**/rest/v1/amj_order_materials*", datos)
         await pg.goto("http://127.0.0.1:8791/beta/index.html"); await pg.evaluate(PREPARA)
         await pg.fill(".rpml input >> nth=0", "destinatario@prueba.example"); await pg.locator(".rpma .out").first.click(); await pg.wait_for_selector(".rpmv canvas")
