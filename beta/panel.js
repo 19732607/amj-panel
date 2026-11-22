@@ -270,14 +270,17 @@ function repSendOpen(){
       if(!prev){ say('Primero pulsa «Ver el PDF que se enviará» y revísalo: se envía exactamente ese archivo.','err'); return }
       if(prev.dest){ const A=prev.dest.autorizados.map(v=>v.toLowerCase()), fuera=prev.dest.solo_ficticios?para.filter(v=>!/\.(example|test|invalid)$/i.test(v)):para.filter(v=>!A.includes(v.toLowerCase()));
         if(fuera.length){ say(prev.dest.solo_ficticios?'Versión de pruebas: solo destinatarios ficticios (nombre@prueba.example). No vale: '+fuera.join(', ')+'.':A.length?'No están autorizados para este cliente: '+fuera.join(', ')+'. Autorizados: '+prev.dest.autorizados.join(', ')+'.':'Este cliente no tiene destinatarios autorizados.','err'); return } }
-      if(Date.now()>prev.caduca){ prev=null; pintaFotos(); const v=card.querySelector('.rpmv'); if(v) v.remove(); say('La vista previa ha caducado (30 minutos). Pulsa otra vez «Ver el PDF que se enviará», revísalo y vuelve a enviar.','err'); return }
+      if(Date.now()>prev.caduca&&!incierto){ prev=null; pintaFotos(); const v=card.querySelector('.rpmv'); if(v) v.remove(); say('La vista previa ha caducado (30 minutos). Pulsa otra vez «Ver el PDF que se enviará», revísalo y vuelve a enviar.','err'); return }
       if(bs.dataset.ok!=='1'&&!incierto){ bs.dataset.ok='1'; bs.textContent='✉ Confirmar: enviar a '+para.join(', '); say('Pulsa otra vez para confirmar el envío a '+para.join(', ')+(prev.fotos.faltan?'. Atención: en el PDF faltan '+prev.fotos.faltan+' fotos.':'.')); return }
       busy(true); say('Enviando…');
       try{ const j=await repCall({accion:'enviar',sello:prev.sello,pdf_b64:prev.b64,para,copia:cc.checked?REP_COPIA:'',asunto:su.value.trim(),texto:tx.value.trim()}); try{ localStorage.setItem(KEY2,para.join(', ')) }catch(e){}
+        if(j.registro_pendiente){ incierto=true; busy(false); bs.dataset.ok='1'; bs.textContent='↻ Reintentar el mismo envío'; say(j.aviso||'El correo ha salido, pero no ha quedado anotado. Pulsa «Reintentar el mismo envío»: no se enviará otra vez.','err'); return }
         incierto=false; say('Enviado a '+j.para.join(', ')+(cc.checked?' · copia a '+REP_COPIA:'')+' · adjunto '+j.archivo+' (huella '+j.sha256.slice(0,12)+'…).','ok'); bs.textContent='✓ Enviado'; bv.disabled=false; [to,su,tx,cc].forEach(i=>i.disabled=true) }
       catch(e){ busy(false);
         if(e.codigo==='RESULTADO_INCIERTO'||(!e.http&&!e.codigo)){ incierto=true; bs.dataset.ok='1'; bs.textContent='↻ Reintentar el mismo envío'; say('No se sabe si el correo ha salido: no llegó la respuesta. Pulsa «Reintentar el mismo envío» sin cambiar nada; si ya había salido, no se duplicará.','err') }
         else if(e.codigo==='ENVIO_DESHABILITADO'){ bs.dataset.ok=''; bs.textContent='✉ Enviar ahora'; say('Versión de pruebas: el envío real está deshabilitado. El PDF y los datos del envío se han comprobado y son correctos (huella '+(e.j.sha256||'').slice(0,12)+'…).') }
+        else if(e.codigo==='EN_CURSO'){ incierto=true; bs.dataset.ok='1'; bs.textContent='↻ Reintentar el mismo envío'; say(e.message,'err') }
+        else if(['ENVIO_PENDIENTE_OTRO_PDF','YA_ENVIADO_OTRO_PDF','ENVIO_INCIERTO_ANTIGUO'].includes(e.codigo)){ bs.dataset.ok=''; bs.textContent='✉ Enviar ahora'; say('No se envió: '+e.message,'err') }
         else { if(e.http===409){ prev=null; pintaFotos(); const v=card.querySelector('.rpmv'); if(v) v.remove() } bs.dataset.ok=''; bs.textContent='✉ Enviar ahora'; say('No se envió: '+e.message,'err') } } };
     to.oninput=su.oninput=tx.oninput=cc.onchange=reinicia; /* cualquier cambio en destinatario, asunto, texto o copia exige confirmar otra vez */
     box.append(card) });
