@@ -39,7 +39,15 @@ const MED={}, MAT={}, THU={}; let repFetching=false;
 let CTX, ctxP=null;
 function repCtx(){ if(CTX!==undefined||ctxP) return; ctxP=rpc('amj_admin_informe_ordenes',{}).then(a=>{ CTX={}; (a||[]).forEach(x=>CTX[x.id]=x) }).catch(()=>{ CTX=null }).finally(()=>{ ctxP=null; if(sec==='informes') renderSec() }) }
 /* Misma definición que el servidor (vista v_kpi_ordenes): la orden se cerró sin poder ejecutar el trabajo. */
-const sinEjec=o=>/^\s*VISITA REALIZADA SIN POSIBILIDAD/i.test(o.report||'')||/no eh podido|no he podido|no fue posible|no se pudo|no ha sido posible/i.test(o.report||'');
+const sinEjecTxt=o=>/^\s*VISITA REALIZADA SIN POSIBILIDAD/i.test(o.report||'')||/no eh podido|no he podido|no fue posible|no se pudo|no ha sido posible/i.test(o.report||'');
+/* Fuente: v_kpi_ordenes.sin_ejecucion, que llega con el contexto del servidor; la regla de texto solo se usa mientras ese contexto no ha llegado. */
+const sinEjec=o=>{ const x=CTX&&CTX[o.id]; return x&&typeof x.sin_ejecucion==='boolean'?x.sin_ejecucion:sinEjecTxt(o) };
+/* Estado de una orden en una fecha de corte (día de Madrid), reconstruido con los eventos del servidor: 'cancelada', 'cerrada' o 'abierta'.
+   Cuenta la última de cierre / anulación de cierre / reapertura hasta ese día; una cancelación hasta ese día manda. null = sin historial. */
+/* ¿Abierta en la fecha de corte? Con historial del servidor, por eventos; sin él, por el estado de hoy (y el informe lo dice). */
+function repAbiertaAl(o,dc){ const e=repEstadoAl(o,dc); if(e) return e==='abierta'; return o.st!=='cancelled'&&(o.st!=='completed'||(o.fa&&dayOf(o.fa)>dc)) }
+function repEstadoAl(o,dc){ const x=CTX&&CTX[o.id]; if(!x||!Array.isArray(x.eventos)) return null; const E=x.eventos.filter(e=>dayOf(e.t)<=dc);
+  if(E.some(e=>e.a==='cancel')) return 'cancelada'; const u=E.filter(e=>e.a!=='cancel').pop(); return u&&u.a==='finish'?'cerrada':'abierta' }
 /* Antes de generar un PDF se vuelven a leer fotos y materiales. Devuelve las órdenes cuyo contenido ha cambiado; lanza error si la lectura falla o queda incompleta. */
 async function repRefresh(ids){ const nM={}, nT={}; ids.forEach(id=>{ nM[id]=[]; nT[id]=[] });
   for(let i=0;i<ids.length;i+=40){ const ch=ids.slice(i,i+40), inl='('+ch.join(',')+')';
@@ -104,8 +112,8 @@ function repFmt(L,d0,d1,WK,QN,MS,CL){ const addD0=(d,n)=>{ const x=new Date(d+'T
   if(MS){ /* KPI del mes */
     const inP=s=>s&&dayOf(s)>=d0&&dayOf(s)<=dc, mine=real().filter(o=>cls.includes(o.cl)&&o.st!=='cancelled'), rec=mine.filter(o=>inP(o.ca)); /* las canceladas son gestión interna de AMJ: no entran en el informe del cliente */
     /* Abiertas en la fecha de corte. Una orden cancelada DESPUÉS del corte estaba abierta ese día: solo se sabe con el histórico del servidor. */
-    const hist=!!CTX, cerrado=dc<todayStr(), canD=o=>CTX&&CTX[o.id]&&CTX[o.id].cancelada_at?dayOf(CTX[o.id].cancelada_at):'';
-    const opn=real().filter(o=>cls.includes(o.cl)&&dayOf(o.ca)<=dc&&(o.st==='cancelled'?(hist&&canD(o)>dc):(o.st!=='completed'||(o.fa&&dayOf(o.fa)>dc))));
+    const hist=!!CTX, cerrado=dc<todayStr();
+    const opn=real().filter(o=>cls.includes(o.cl)&&dayOf(o.ca)<=dc&&repAbiertaAl(o,dc));
     const hrs=(a,b)=>(new Date(b)-new Date(a))/36e5, avg=a=>a.length?a.reduce((x,y)=>x+y,0)/a.length:null, fH=h=>h===null?'—':(h<24?h.toFixed(1).replace('.',',')+' h':(h/24).toFixed(1).replace('.',',')+' días');
     const tA=avg(L.filter(o=>o.sa).map(o=>hrs(o.ca,o.sa))), tR=avg(L.map(o=>hrs(o.ca,o.fa))), tW=avg(L.filter(o=>o.min!=null).map(o=>o.min));
     const d24=L.filter(o=>hrs(o.ca,o.fa)<24).length, d48=L.filter(o=>hrs(o.ca,o.fa)<48).length, /* «menos de»: el límite exacto no entra */ pct=(a,b)=>b?Math.round(a/b*100)+' %':'—';
@@ -177,8 +185,7 @@ function repFmt(L,d0,d1,WK,QN,MS,CL){ const addD0=(d,n)=>{ const x=new Date(d+'T
       if(M.length>1) row(b3,['','','Subtotal AMJ-'+o.ref,td(eur2(sumM(M,'subtotal')),'r'),td(eur2(sumM(M,'iva')),'r'),td(eur2(sumM(M,'total')),'r')],'sub') });
     if(mload&&withM.length){ const des=allM.every(m=>m.subtotal!=null&&m.iva!=null); row(b3,['','','Total '+DELA,td(des?eur2(sumM(allM,'subtotal')):'—','r'),td(des?eur2(sumM(allM,'iva')):'—','r'),td(eur2(sumM(allM,'total')),'r')],'tot') }
     doc.append(t3);
-    const canD2=o=>CTX&&CTX[o.id]&&CTX[o.id].cancelada_at?dayOf(CTX[o.id].cancelada_at):'';
-    const open=real().filter(o=>cls.includes(o.cl)&&dayOf(o.ca)<=dc&&(o.st==='cancelled'?canD2(o)>dc:(o.st!=='completed'||(o.fa&&dayOf(o.fa)>dc)))); /* mismo criterio que el KPI «abiertas» */
+    const open=real().filter(o=>cls.includes(o.cl)&&dayOf(o.ca)<=dc&&repAbiertaAl(o,dc)); /* mismo criterio que el KPI «abiertas» */
     if(open.length){ doc.append(H(live?'Órdenes abiertas a fecha de '+dm(dc):'Órdenes abiertas al cierre '+DELA)); const [t4,b4]=table(['Orden / inmueble','Trabajo','Estado']); open.forEach(o=>row(b4,[td('AMJ-'+o.ref+' · '+code(o),'nwr'),o.work,o.st==='completed'?'Terminada después, el '+dm(dayOf(o.fa)):o.st==='cancelled'?'Abierta en esa fecha':(STATUS[o.st]||[o.st])[0]])); doc.append(t4) } }
   const ft=el('div','rf-ft'); ft.append(el('span',null,'amjmaintenance.es · Informe para '+cname),el('span',null,'ASSET MAINTENANCE · JUST IN TIME')); doc.append(ft);
   doc._rep={cl:cls.join('+'),cname,one,tipo:MS?'mensual':QN?'quincenal':WK?'semanal':'diario',d0,d1,per:MS?per:WK?per.replace(/^.* · /,''):dlong,ids:L.map(o=>o.id),refs:L.map(o=>o.ref),mat:WK,dc};
