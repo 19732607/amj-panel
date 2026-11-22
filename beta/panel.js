@@ -3,8 +3,30 @@
    comprobación de administrador que el resto del panel de la app). No escribe nada en el servidor. */
 (function(){
 'use strict';
-const SB='https://biwjrbcfupmbpoxnrolt.supabase.co', KEY='sb_publishable_ywkQpKdfMksufdqWkv-fyA_OtcxTXEm';
-const TZ='Europe/Madrid', POLL=15000, PAGE=100, MAXPAGES=200, STORE='amj.panel.session';
+/* ---------- entorno ----------
+   Sin más, el panel habla con PRODUCCIÓN (como siempre). La única excepción es el MODO ENSAYO, que se abre con «?entorno=ensayo»:
+   · solo funciona servido desde este ordenador (localhost); publicado en internet, se niega;
+   · exige una configuración (ensayo/config.js) cuyo proyecto sea EXACTAMENTE AMJ-Pruebas; si falta, está incompleta o apunta a otro
+     proyecto, el panel se detiene ANTES de enviar credenciales o cualquier otra petición. En modo ensayo nunca se cae a producción. */
+const PROD={url:'https://biwjrbcfupmbpoxnrolt.supabase.co',clave:'sb_publishable_ywkQpKdfMksufdqWkv-fyA_OtcxTXEm'}, REF_PROD='biwjrbcfupmbpoxnrolt', REF_PRUEBAS='gktignfhalpwhewhkzya';
+const ENSAYO=document.documentElement.dataset.amjModo==='ensayo';
+function entornoEnsayo(){ const c=window.AMJ_ENTORNO, local=h=>h==='localhost'||h==='127.0.0.1';
+  if(!local(location.hostname)) throw new Error('El modo ensayo solo funciona abierto desde este ordenador (localhost). Aquí no se usa.');
+  if(!c||typeof c!=='object') throw new Error('Falta la configuración del ensayo (ensayo/config.js). No se envía nada.');
+  if(c.proyecto!==REF_PRUEBAS) throw new Error('La configuración del ensayo no es la de AMJ-Pruebas ('+REF_PRUEBAS+'). No se envía nada.');
+  let u; try{ u=new URL(String(c.url||'')) }catch(e){ throw new Error('La dirección del servidor del ensayo no es válida. No se envía nada.') }
+  if(String(c.url).includes(REF_PROD)||String(c.clave||'')===PROD.clave) throw new Error('La configuración del ensayo apunta a PRODUCCIÓN. No se envía nada.');
+  const dobles=c.dobles_locales===true&&local(u.hostname)&&u.protocol==='http:'; /* solo para las pruebas con servicios simulados en este ordenador */
+  if(!dobles&&u.origin!=='https://'+REF_PRUEBAS+'.supabase.co') throw new Error('La dirección del ensayo no es la de AMJ-Pruebas. No se envía nada.');
+  if(typeof c.clave!=='string'||c.clave.length<20||/^PEGAR/.test(c.clave)) throw new Error('Falta la clave pública de AMJ-Pruebas en la configuración del ensayo. No se envía nada.');
+  if(!dobles&&c.clave.split('.').length===3){ let ref=''; try{ ref=JSON.parse(atob(c.clave.split('.')[1].replace(/-/g,'+').replace(/_/g,'/'))).ref||'' }catch(e){} if(ref!==REF_PRUEBAS) throw new Error('La clave pública del ensayo no es de AMJ-Pruebas. No se envía nada.') }
+  return {url:u.origin,clave:c.clave,dobles} }
+let ENT=PROD, ENT_ERR=''; if(ENSAYO){ try{ ENT=entornoEnsayo() }catch(e){ ENT=null; ENT_ERR=e.message } }
+const SB=ENT?ENT.url:'', KEY=ENT?ENT.clave:'';
+const exigeEntorno=()=>{ if(!ENT) throw new Error(ENT_ERR||'Entorno no válido') }; /* delante de TODA petición: sin entorno válido no sale nada */
+/* En ensayo, la sesión debe ser de AMJ-Pruebas: el emisor del pase de sesión lo dice. */
+const sesionDeEnsayoValida=tok=>{ if(!ENSAYO||(ENT&&ENT.dobles)) return true; try{ return JSON.parse(atob(tok.split('.')[1].replace(/-/g,'+').replace(/_/g,'/'))).iss==='https://'+REF_PRUEBAS+'.supabase.co/auth/v1' }catch(e){ return false } };
+const TZ='Europe/Madrid', POLL=15000, PAGE=100, MAXPAGES=200, STORE='amj.panel.session'+(ENSAYO?'.ensayo':'');
 const $=id=>document.getElementById(id);
 let session=null, WARN='', TEST=new Set(), T=null, M=null, P=null, RH=null, payT='', sec='ordenes', kpiDays='all', kpiFrom='', kpiTo='', RV=null, CP=null, repCl='', repDay='', repPer='dia', repSel=new Set(), repSelW=new Set(), repView=false, repAuto=false, repMsg='', O=[], prevRev={}, view='all', lastOk=0, timer=null, loading=false;
 
@@ -13,16 +35,17 @@ function storage(){ try{ return localStorage.getItem(STORE)?localStorage:session
 function saveSession(s,remember){ session=s; try{ (remember?localStorage:sessionStorage).setItem(STORE,JSON.stringify(s)); (remember?sessionStorage:localStorage).removeItem(STORE) }catch(e){} }
 function loadSession(){ try{ const st=storage(); const v=st&&st.getItem(STORE); return v?JSON.parse(v):null }catch(e){ return null } }
 function clearSession(){ session=null; try{ localStorage.removeItem(STORE); sessionStorage.removeItem(STORE) }catch(e){} }
-async function auth(path,body){
+async function auth(path,body){ exigeEntorno();
   const r=await fetch(SB+'/auth/v1/'+path,{method:'POST',headers:{apikey:KEY,'Content-Type':'application/json'},body:JSON.stringify(body)});
-  const j=await r.json().catch(()=>({})); if(!r.ok) throw Object.assign(new Error(j.error_description||j.msg||'AUTH'),{status:r.status}); return j;
+  const j=await r.json().catch(()=>({})); if(!r.ok) throw Object.assign(new Error(j.error_description||j.msg||'AUTH'),{status:r.status});
+  if(j.access_token&&!sesionDeEnsayoValida(j.access_token)) throw new Error('La sesión recibida no es de AMJ-Pruebas. Ensayo detenido.'); return j;
 }
 function remembered(){ try{ return !!localStorage.getItem(STORE) }catch(e){ return false } }
 async function refresh(){
   const j=await auth('token?grant_type=refresh_token',{refresh_token:session.refresh_token});
   saveSession({access_token:j.access_token,refresh_token:j.refresh_token,expires_at:Date.now()+j.expires_in*1000,email:session.email},remembered());
 }
-async function rpc(name,args){
+async function rpc(name,args){ exigeEntorno();
   if(!session) throw new Error('NO_SESSION');
   if(Date.now()>session.expires_at-120000) await refresh();
   let r=await fetch(SB+'/rest/v1/rpc/'+name,{method:'POST',headers:{apikey:KEY,Authorization:'Bearer '+session.access_token,'Content-Type':'application/json'},body:JSON.stringify(args)});
@@ -31,7 +54,7 @@ async function rpc(name,args){
   return JSON.parse(txt);
 }
 
-async function authHdr(){ if(!session) throw new Error('NO_SESSION'); if(Date.now()>session.expires_at-120000) await refresh(); return {apikey:KEY,Authorization:'Bearer '+session.access_token} }
+async function authHdr(){ exigeEntorno(); if(!session) throw new Error('NO_SESSION'); if(Date.now()>session.expires_at-120000) await refresh(); return {apikey:KEY,Authorization:'Bearer '+session.access_token} }
 async function rest(path){ let r=await fetch(SB+'/rest/v1/'+path,{headers:await authHdr()}); if(r.status===401){ await refresh(); r=await fetch(SB+'/rest/v1/'+path,{headers:await authHdr()}) } if(!r.ok) throw new Error('HTTP '+r.status); return r.json() }
 /* fotos y materiales por orden (solo lectura, para los informes) */
 const MED={}, MAT={}, THU={}; let repFetching=false;
@@ -270,6 +293,15 @@ function repPendOpen(){ repSendClose(); const fdl=d=>d.slice(8,10)+'/'+d.slice(5
       try{ const j=await repCall({accion:'reintentar',clave:e.clave}); say((j.ya_enviado?'Ya constaba como enviado: no se ha repetido. ':'Enviado a '+j.para.join(', ')+'. ')+'Adjunto '+j.archivo+' (huella '+j.sha256.slice(0,12)+'…).','ok'); bs.textContent='✓ Enviado'; bv.disabled=false; repPend(true) }
       catch(er){ busy(false); bs.dataset.ok=''; bs.textContent='↻ Reintentar el mismo envío'; say((er.codigo==='ENVIO_DESHABILITADO'?'Versión de pruebas: el envío real está apagado. El envío guardado y su PDF son correctos. ':'')+er.message,'err'); if(['ENVIO_NO_ENCONTRADO','ENVIO_INCIERTO_ANTIGUO','PDF_NO_DISPONIBLE'].includes(er.codigo)){ bs.disabled=true; repPend(true) } } };
     box.append(card) });
+  if(!(PEND||[]).length) box.append(el('div','rpmh2','No hay ningún envío sin confirmar.'));
+  /* Registro de envíos (30 días), para conciliar: qué se pidió, en qué quedó y qué pasó con el PDF guardado. Lo sirve el servidor; aquí solo se lee. */
+  const reg=el('div','rpmc'); reg.id='repreg'; reg.append(el('h4',null,'Registro de envíos de informes · últimos 30 días'),el('div','rpmh2','Cargando…')); box.append(reg);
+  repCall({accion:'registro'}).then(j=>{ reg.lastChild.remove(); const E=j.envios||[]; if(!E.length){ reg.append(el('div','rpmh2','Sin envíos registrados.')); return }
+    const tb=el('table','rf-tb'), hr=el('tr'); ['Pedido','Cliente e informe','Para','Estado','PDF guardado','Huella'].forEach(h=>hr.append(el('th',null,h))); const th=el('thead'); th.append(hr); const bd=el('tbody'); tb.append(th,bd);
+    const EST={enviado:'Enviado',rechazado:'No enviado',pendiente:'En curso',incierto:'Sin confirmar'}, f=t=>t?new Date(t).toLocaleString('es-ES',{dateStyle:'short',timeStyle:'short'}):'—';
+    E.forEach(e=>{ const r=el('tr'); [f(e.creado_at),clName(({HELPHOUSING:'HELP'})[e.cliente]||e.cliente)+' · '+e.tipo+' · '+fdl(e.desde)+(e.hasta!==e.desde?' – '+fdl(e.hasta):''),(e.destinatarios||[]).join(', '),
+      (e.sin_confirmar_caducado?'Sin confirmar (caducado)':EST[e.estado]||e.estado)+(e.ciclo>1?' · intento '+e.ciclo:'')+(e.detalle?' · '+e.detalle:''),e.guardado_at?(e.archivo_borrado_at?'retirado el '+f(e.archivo_borrado_at):'guardado'):'—',(e.sha256||'').slice(0,12)+'…'].forEach(c=>r.append(el('td',null,c))); bd.append(r) }); reg.append(tb) })
+    .catch(er=>{ reg.lastChild.textContent='No se pudo leer el registro: '+er.message });
   document.body.append(ov) }
 function repSendOpen(){
   const docs=[...document.querySelectorAll('#obody .rf')].filter(d=>d._rep); if(!docs.length) return;
@@ -616,6 +648,7 @@ const SECS={
    if(repAuto){ repAuto=false; setTimeout(repSendOpen,0) }
    const row=el('div','repbar'); if(repView) row.append(bBack,bEnv); else row.append(scl,prev,dIn,next,bVer,bEnv); ctl.append(seg,row); if(repMsg) ctl.append(el('div','repmsg',repMsg));
    repPend(); if(PEND&&PEND.length){ const pb=el('div','repmsg reppend'), b=el('button','out','Ver y retomar'); b.onclick=repPendOpen; pb.append(document.createTextNode((PEND.length===1?'Hay 1 envío de informe sin confirmar. ':'Hay '+PEND.length+' envíos de informes sin confirmar. ')),b); ctl.append(pb) }
+   { const lr=el('a','rpmlk','Registro de envíos'); lr.href='#'; lr.id='represg'; lr.onclick=ev=>{ ev.preventDefault(); repPendOpen() }; row.append(lr) }
    /* periodo */
    let d0=repDay, d1=repDay; if(WK){ const wd=(new Date(repDay+'T12:00:00').getDay()+6)%7; d0=addD(repDay,-wd); d1=addD(d0,6) }
    if(MS){ const a=repDay.slice(0,8); d0=a+'01'; d1=addD(addD(a+'28',4).slice(0,8)+'01',-1) }
@@ -870,5 +903,7 @@ document.addEventListener('drop',async e=>{ if($('nw').hidden||!NW.addFiles) ret
     for(const u of urls){ try{ const r=await fetch(u); const bl=await r.blob(); if(/^image\//.test(bl.type)) files.push(new File([bl],'foto.'+bl.type.split('/')[1],{type:bl.type})) }catch(err){} } }
   NW.addFiles(files,'Esa aplicación no deja arrastrar la foto al navegador (WhatsApp lo bloquea). Haz clic derecho en la foto → «Copiar imagen» y luego clic derecho en el recuadro de fotos → «Pegar».') },true);
 $('fab').onclick=nwOpen; $('newo').onclick=nwOpen; $('nwx').onclick=nwClose; $('nw').onclick=e=>{ if(e.target===$('nw')) nwClose() };
-session=loadSession(); if(session) start();
+if(ENSAYO){ const b=el('div','ensayo-banda',ENT?'ENSAYO · AMJ-Pruebas ('+(ENT.dobles?'servicios simulados en este ordenador':REF_PRUEBAS)+') · no es producción':'ENSAYO DETENIDO · '+ENT_ERR); b.id='ensayo-banda'; document.body.prepend(b);
+  if(!ENT){ ['le','lp','lb'].forEach(i=>{ const x=$(i); if(x) x.disabled=true }); $('lerr').textContent=ENT_ERR } }
+session=ENT?loadSession():null; if(session) start();
 })();

@@ -1,4 +1,6 @@
-"""Prueba conjunta panel + función (bloques 1 y 2). El panel real habla con la función real, que usa dobles de Supabase y del correo.
+"""Prueba conjunta panel + función. El panel real habla con la función real, que usa dobles de Supabase y del correo.
+OJO: esta prueba intercepta las peticiones del panel y pone ella las cabeceras CORS; sirve para comprobar el CONTENIDO (panel = servidor),
+no el inicio de sesión ni el CORS. Eso lo prueba pruebas/ensayo_local.py, sin interceptar nada.
 Antes, en el repositorio amj-tecnicos-ios:  deno run --no-lock --allow-net=127.0.0.1,0.0.0.0:8000 --allow-env --allow-read tests/informes/envio/servidor_local.ts
 Después:  python3 pruebas/integracion.py"""
 import asyncio, base64, json, os, urllib.request

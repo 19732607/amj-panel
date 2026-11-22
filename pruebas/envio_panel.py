@@ -7,7 +7,7 @@ from playwright.async_api import async_playwright
 RAIZ = pathlib.Path(__file__).resolve().parent.parent
 PDF = (RAIZ / "pruebas" / "ficticio.pdf").read_bytes(); SHA = hashlib.sha256(PDF).hexdigest()
 tmp = pathlib.Path(tempfile.mkdtemp()); shutil.copytree(RAIZ / "beta", tmp / "beta")
-js = (tmp / "beta" / "panel.js").read_text(encoding="utf-8"); i = js.rindex("session=loadSession()")
+js = (tmp / "beta" / "panel.js").read_text(encoding="utf-8"); i = js.rindex("session=ENT?loadSession()")
 (tmp / "beta" / "panel.js").write_text(js[:i] + "window.__t=c=>eval(c);\n" + js[i:], encoding="utf-8")   # gancho solo para la prueba
 class H(http.server.SimpleHTTPRequestHandler):
     def log_message(self, *a): pass
@@ -28,6 +28,8 @@ async def main():
         async def funcion(route):
             cuerpo = json.loads(route.request.post_data)
             # envíos sin confirmar guardados en el servidor (segunda revisión, punto 4)
+            if cuerpo["accion"] == "registro": return await route.fulfill(json={"ok": True, "envios": [{"clave": "k1", "cliente": "FICT", "tipo": "diario", "desde": "2026-11-19", "hasta": "2026-11-19", "destinatarios": ["destinatario@prueba.example"], "estado": "incierto",
+                "detalle": None, "ciclo": 1, "sha256": SHA, "creado_at": "2026-11-19T17:00:00Z", "guardado_at": "2026-11-19T17:00:01Z", "archivo_borrado_at": "2026-11-20T16:30:00Z", "sin_confirmar_caducado": True}]})
             if cuerpo["accion"] == "pendientes": return await route.fulfill(json={"ok": True, "envio_real": True, "envios": pend})
             if cuerpo["accion"] in ("recuperar", "reintentar"):
                 retoma.append(cuerpo); e = next(x for x in pend if x["clave"] == cuerpo["clave"])
@@ -103,6 +105,8 @@ async def main():
         ok("Hay 1 envío de informe sin confirmar" in await pg.inner_text(".reppend") and await pg.evaluate("()=>__t('repLibera.length')") == 0, "revisión 2 · tras recargar el panel se avisa del envío sin confirmar (dato del servidor)")
         await pg.click(".reppend button"); t = await pg.inner_text("#rpm")
         ok("Informe diario ficticio" in t and "destinatario@prueba.example" in t and "sin respuesta: no se sabe si salió" in t and SHA[:12] in t, "revisión 2 · se ven destinatario, asunto, estado y huella del envío guardado")
+        await pg.wait_for_selector("#repreg table"); r = await pg.inner_text("#repreg")
+        ok("Sin confirmar (caducado)" in r and "retirado el" in r and SHA[:12] in r and "destinatario@prueba.example" in r, "revisión 3 · registro de envíos para conciliar: estado, destinatario, huella y qué pasó con el PDF guardado")
         await pg.click(".rpma .out"); await pg.wait_for_selector(".rpmv canvas")
         descarga = await pg.evaluate("async()=>{ const a=document.querySelector('.rpmf a[download]'); const u=new Uint8Array(await (await fetch(a.href)).arrayBuffer()); const h=await crypto.subtle.digest('SHA-256',u); return [a.download,[...new Uint8Array(h)].map(x=>x.toString(16).padStart(2,'0')).join('')] }")
         ok(descarga == ["Informe_ficticio.pdf", SHA] and retoma[-1] == {"accion": "recuperar", "clave": "amj-informe-ficticia"}, "revisión 2 · el PDF recuperado es el sellado (misma huella en visor y descarga)")
