@@ -87,13 +87,19 @@ const repCodigoCli=cl=>({HELP:'HELPHOUSING'})[cl]||cl;
 const repPeriodos=cl=>(PERS||[]).filter(p=>p.cliente===repCodigoCli(cl)).map(p=>[p.desde,p.hasta,Number(p.cupo)]);
 const repInm=o=>{ const x=CTX&&CTX[o.id]; return x&&x.inmueble!=null&&String(x.inmueble).trim()?String(x.inmueble).trim():'' };   /* '' = inmueble sin identificar en la ficha */
 const repInmK=o=>repInm(o)||'orden:'+o.ref;
+/* Cliente de una orden EN LOS INFORMES: el de su ficha en el servidor (CTX.cliente); el prefijo de la descripción solo mientras el contexto no ha llegado. */
+const repCli=o=>{ const x=CTX&&CTX[o.id]; return x&&x.cliente?({HELPHOUSING:'HELP'})[x.cliente]||x.cliente:o.cl };
+/* ¿Cancelada en esa fecha? Con historial, por el evento de cancelación hasta ese día; sin historial, por el estado de hoy. */
+const repNoCancAl=(o,d)=>{ const e=repEstadoAl(o,d); return e?e!=='cancelada':!['cancelled','canceled','rejected'].includes(o.st) };
 /* Cierre vigente en la fecha de corte: {t} si la orden estaba cerrada ese día; null si no. Sin historial del servidor, el cierre de hoy. */
 function repCierreAl(o,dc){ const x=CTX&&CTX[o.id]; if(!x||!Array.isArray(x.eventos)||!x.eventos.length) return o.st==='completed'&&o.fa&&dayOf(o.fa)<=dc?{t:o.fa}:null;
   if(repEstadoAl(o,dc)!=='cerrada') return null; const F=x.eventos.filter(e=>e.a==='finish'), enC=F.filter(e=>dayOf(e.t)<=dc).pop(), ult=F[F.length-1]; return {t:enC===ult&&o.fa?o.fa:enC.t,anulado:enC!==ult} }
 /* Informes con el formato que AMJ envía al cliente (vista «Ver»). Diario: órdenes marcadas. Semanal: informe completo de la semana de un cliente. */
 function repFmt(L,d0,d1,WK,QN,MS,CL){ const addD0=(d,n)=>{ const x=new Date(d+'T12:00:00'); x.setDate(x.getDate()+n); return x.toLocaleDateString('sv-SE') }; const PW=MS?'mes':QN?'quincena':'semana', DELA=MS?'del mes':'de la '+PW;
-  const fd=(d,o)=>new Date(d+'T12:00:00').toLocaleDateString('es-ES',o), cap1=t=>t?t.charAt(0).toUpperCase()+t.slice(1).toLowerCase():'', dm=d=>d.slice(8,10)+'/'+d.slice(5,7);
-  const cls=CL?[CL]:[...new Set(L.map(o=>o.cl))], one=cls.length===1, cname=cls.map(clName).join(' + '), city=[...new Set(L.map(o=>cap1(o.loc)).filter(Boolean))].join(' / ');
+  /* fechas escritas con tabla propia (no con el idioma del navegador): el servidor las recompone igual, letra a letra */
+  const MESL=['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'], MESC=['ene','feb','mar','abr','may','jun','jul','ago','sept','oct','nov','dic'];
+  const fd=(d,o)=>{ const dd=o.day==='2-digit'?d.slice(8,10):o.day?String(+d.slice(8,10)):'', mm=o.month==='long'?MESL[+d.slice(5,7)-1]:o.month==='short'?MESC[+d.slice(5,7)-1]:''; return [dd,mm,o.year?d.slice(0,4):''].filter(Boolean).join(o.month==='long'?' de ':' ') }, cap1=t=>t?t.charAt(0).toUpperCase()+t.slice(1).toLowerCase():'', dm=d=>d.slice(8,10)+'/'+d.slice(5,7);
+  const cls=CL?[CL]:[...new Set(L.map(o=>repCli(o)))], one=cls.length===1, cname=cls.map(clName).join(' + '), city=[...new Set(L.map(o=>cap1(o.loc)).filter(Boolean))].join(' / ');
   const code=o=>(o.piso||o.ad||'—').replace(/^(ENSO|HELP)-/,''), dlong=fd(d1,{day:'numeric',month:'long',year:'numeric'});
   const per=MS?fd(d1,{month:'long',year:'numeric'}):(QN?(d0.slice(8)==='01'?'1.ª':'2.ª')+' quincena de '+fd(d1,{month:'long'})+' · ':'')+(!WK?dlong:'del '+fd(d0,d0.slice(0,7)===d1.slice(0,7)?{day:'numeric'}:{day:'numeric',month:'long'})+' al '+dlong);
   const dc=d1>todayStr()?todayStr():d1, live=WK&&dc<d1;
@@ -106,10 +112,11 @@ function repFmt(L,d0,d1,WK,QN,MS,CL){ const addD0=(d,n)=>{ const x=new Date(d+'T
   doc.append(el('h1','rf-h1',MS?'Informe mensual de servicio':WK?'Informe de servicio':'Informe diario de servicio'),el('div','rf-sub',[cname,city,per].filter(Boolean).join(' · ')));
   const pisos=new Set(L.map(repInmK)).size, loaded=L.every(o=>o.id in MED), mload=L.every(o=>o.id in MAT)&&repMatListo(L), nf=L.reduce((a,o)=>a+(MED[o.id]||[]).length,0);
   const sumM=(arr,f)=>arr.reduce((a,m)=>a+Number(m[f]||0),0), allM=L.flatMap(o=>repMat(o)||[]);
+  const perErr=one&&PERS===null, perCarga=one&&PERS===undefined; /* null = la consulta de periodos contractuales FALLÓ; undefined = aún cargando */
   const PERI=one?repPeriodos(cls[0]):[], help=PERI.length>0, vkey=o=>repInmK(o)+'|'+dayOf(o.sa);
-  const hAll=help?real().filter(o=>o.cl===cls[0]&&o.st!=='cancelled'&&o.sa):[];
+  const hAll=help?real().filter(o=>repCli(o)===cls[0]&&o.sa&&!['rejected','draft'].includes(o.st)):[]; /* la cancelación se mira en la fecha de cada periodo (abajo) */
   /* periodos contractuales que toca el informe (hasta la fecha de corte); cada uno con sus visitas y su saldo */
-  const pers=PERI.filter(p=>p[0]<=dc&&p[1]>=d0).map(([a,b,tot])=>{ const upto=dc<b?dc:b, from=d0>a?d0:a, T=hAll.filter(o=>dayOf(o.sa)>=a&&dayOf(o.sa)<=upto), V=T.filter(repInm) /* sin inmueble en la ficha: pendiente de clasificar, no consume aviso */; return {a,b,tot,upto,from,V,sinInm:T.filter(o=>!repInm(o)),n:new Set(V.map(vkey)).size,inR:V.filter(o=>dayOf(o.sa)>=from)} });
+  const pers=PERI.filter(p=>p[0]<=dc&&p[1]>=d0).map(([a,b,tot])=>{ const upto=dc<b?dc:b, from=d0>a?d0:a, T=hAll.filter(o=>dayOf(o.sa)>=a&&dayOf(o.sa)<=upto&&repNoCancAl(o,upto)), V=T.filter(repInm) /* sin inmueble en la ficha: pendiente de clasificar, no consume aviso */; return {a,b,tot,upto,from,V,sinInm:T.filter(o=>!repInm(o)),n:new Set(V.map(vkey)).size,inR:V.filter(o=>dayOf(o.sa)>=from)} });
   const PM=pers.slice().reverse().find(p=>p.inR.length)||pers[pers.length-1]||null;
   const intro=el('p','rf-intro'); intro.append(el('b',null,L.length+(L.length===1?' orden de trabajo finalizada ':' órdenes de trabajo finalizadas ')+(MS?'en '+per:WK?per.replace(/^.* · /,''):'el '+dlong)+'.'),document.createTextNode(' Se detallan las intervenciones por inmueble, el informe del técnico'+(WK?', las fotografías y los materiales.':' y las fotografías de cada trabajo.'))); doc.append(intro);
   if(live) doc.append(el('p','rf-live','Periodo en curso: datos hasta el '+dm(dc)+'. El periodo termina el '+dm(d1)+'.'));
@@ -120,10 +127,10 @@ function repFmt(L,d0,d1,WK,QN,MS,CL){ const addD0=(d,n)=>{ const x=new Date(d+'T
   if(one){ doc.append(H('Cómo trabajamos cada aviso')); const st=el('div','rf-steps');
     ['Aviso de '+cname,'Orden en la app con el código del piso','Asignación de técnico y cita','Trabajo en el inmueble','Cierre con informe y fotos',help?'Aviso computado e informe al cliente':'Informe al cliente'].forEach((t,i)=>{ const d=el('div'); d.append(el('b',null,String(i+1)),el('span',null,t)); st.append(d) }); doc.append(st) }
   if(MS){ /* KPI del mes */
-    const inP=s=>s&&dayOf(s)>=d0&&dayOf(s)<=dc, mine=real().filter(o=>cls.includes(o.cl)&&o.st!=='cancelled'), rec=real().filter(o=>cls.includes(o.cl)&&inP(o.ca)&&(repEstadoAl(o,dc)?repEstadoAl(o,dc)!=='cancelada':o.st!=='cancelled')); /* recibidas: no canceladas en la fecha de corte */ /* las canceladas son gestión interna de AMJ: no entran en el informe del cliente */
+    const inP=s=>s&&dayOf(s)>=d0&&dayOf(s)<=dc, mine=real().filter(o=>cls.includes(repCli(o))&&repNoCancAl(o,dc)), rec=real().filter(o=>cls.includes(repCli(o))&&inP(o.ca)&&(repEstadoAl(o,dc)?repEstadoAl(o,dc)!=='cancelada':o.st!=='cancelled')); /* recibidas: no canceladas en la fecha de corte */ /* las canceladas son gestión interna de AMJ: no entran en el informe del cliente */
     /* Abiertas en la fecha de corte. Una orden cancelada DESPUÉS del corte estaba abierta ese día: solo se sabe con el histórico del servidor. */
     const hist=!!CTX, cerrado=dc<todayStr();
-    const opn=real().filter(o=>cls.includes(o.cl)&&dayOf(o.ca)<=dc&&repAbiertaAl(o,dc));
+    const opn=real().filter(o=>cls.includes(repCli(o))&&dayOf(o.ca)<=dc&&repAbiertaAl(o,dc));
     const hrs=(a,b)=>(new Date(b)-new Date(a))/36e5, avg=a=>a.length?a.reduce((x,y)=>x+y,0)/a.length:null, fH=h=>h===null?'—':(h<24?h.toFixed(1).replace('.',',')+' h':(h/24).toFixed(1).replace('.',',')+' días');
     const tA=avg(L.filter(o=>o.sa).map(o=>hrs(o.ca,o.sa))), tR=avg(L.map(o=>hrs(o.ca,o.fa))), tW=avg(L.filter(o=>o.min!=null).map(o=>o.min));
     const d24=L.filter(o=>hrs(o.ca,o.fa)<24).length, d48=L.filter(o=>hrs(o.ca,o.fa)<48).length, /* «menos de»: el límite exacto no entra */ pct=(a,b)=>b?Math.round(a/b*100)+' %':'—';
@@ -136,33 +143,33 @@ function repFmt(L,d0,d1,WK,QN,MS,CL){ const addD0=(d,n)=>{ const x=new Date(d+'T
     kk(pct(L.filter(o=>(MED[o.id]||[]).length).length,L.length),'órdenes con fotografías'); kk(pct(L.filter(o=>o.report).length,L.length),'órdenes con informe del técnico'); kk(mload?eur2(sumM(allM,'total')):'…','materiales, IVA incluido');
     const offH=rec.filter(o=>{ const d=new Date(o.ca), h=Number(d.toLocaleString('en-GB',{timeZone:TZ,hour:'2-digit',hour12:false})), wd=d.toLocaleDateString('en-GB',{timeZone:TZ,weekday:'short'}); return h<8||h>=20||wd==='Sat'||wd==='Sun' }).length, mins=L.reduce((a,o)=>a+(o.min||0),0);
     /* retirado (22/11): «fuera de horario» mide la hora de alta, no la del aviso */ kk((()=>{ const g={}; L.forEach(o=>{ const k=repInmK(o)+'|'+dayOf(o.sa||o.fa); g[k]=(g[k]||0)+1 }); return Object.values(g).filter(n=>n>1).length })(),'visitas con varias órdenes en el mismo inmueble'); /* retirados (22/11): indicadores basados en el cronómetro */
-    doc.append(g,el('p','rf-note','Tiempos calculados sobre las órdenes finalizadas en el mes. Se cuentan desde el alta de la orden en la app, que no siempre coincide con la hora en que el cliente dio el aviso. El tiempo en el inmueble es el que registra el técnico entre el inicio y el cierre de la orden.'+(cerrado&&!hist?' Las órdenes abiertas se calculan con el estado de hoy: no se dispone del histórico de estados en la fecha de cierre.':'')));
+    doc.append(g,el('p','rf-note','Tiempos calculados sobre las órdenes finalizadas en el mes. Se cuentan desde el alta de la orden en la app, que no siempre coincide con la hora en que el cliente dio el aviso.'+(cerrado&&!hist?' Las órdenes abiertas se calculan con el estado de hoy: no se dispone del histórico de estados en la fecha de cierre.':'')));
     /* gráficos, como en el panel KPI */
     const days={}; days[d0]={c:0,a:0,r:0,x:0}; days[dc]=days[dc]||{c:0,a:0,r:0,x:0}; const add=(s,k)=>{ if(inP(s)) (days[dayOf(s)]=days[dayOf(s)]||{c:0,a:0,r:0,x:0})[k]++ };
-    mine.forEach(o=>{ add(o.ca,'c'); add(o.sa,'a'); if(o.st==='completed') add(o.fa,'r') });
+    rec.forEach(o=>add(o.ca,'c')); mine.forEach(o=>add(o.sa,'a')); L.forEach(o=>add(o.fa,'r')); /* recibidas, empezadas y resueltas con el estado en la fecha de corte: «resueltas» son las mismas órdenes del detalle */
     const lc=lineChart('Flujo de órdenes del mes',days,[['c','Recibidas','#13385f'],['a','Atendidas (empezadas)','#1b8fd9'],['r','Resueltas','#16a36a']]); lc.classList.add('rf-ch'); doc.append(lc);
     { const SER=[['c','Recibidas','#13385f'],['a','Atendidas (empezadas)','#1b8fd9'],['r','Resueltas','#16a36a']], ks=[]; for(let a=d0;a<=dc;a=addD0(a,1)) ks.push(a); lc._m={t:'line',title:'Flujo de órdenes del mes',labels:ks.map(k=>fd(k,{day:'2-digit',month:'short'})),series:SER.map(([k,n,c])=>({n,c,v:ks.map(d=>(days[d]||{})[k]||0)}))} }
-    const cnt=(list,key)=>{ const m={}; list.forEach(o=>{ const k=key(o)||'—'; m[k]=(m[k]||0)+1 }); return Object.entries(m).sort((a,b)=>b[1]-a[1]) };
+    const cnt=(list,key)=>{ const m={}; list.forEach(o=>{ const k=key(o)||'—'; m[k]=(m[k]||0)+1 }); return Object.entries(m).sort((a,b)=>b[1]-a[1]||(a[0]<b[0]?-1:a[0]>b[0]?1:0)) };
     const DN=[['Por tipo de trabajo',cnt(rec,o=>o.sv)],['Por estado en la fecha de corte',cnt(rec,o=>repCierreAl(o,dc)?'Finalizada':'Abierta')],['Por ciudad',cnt(rec,o=>cap1(o.loc))]]; const dg=el('div','rf-dn'); DN.forEach(([t,e])=>dg.append(donut(t,e))); dg._m={t:'donuts',items:DN.map(([title,entries])=>({title,entries}))}; doc.append(dg);
     /* evolución por semana */
     doc.append(H('Evolución por semana')); const [tw,bw]=table(['Semana','Recibidas','Finalizadas','Inmuebles','Materiales']); const addD=(d,n)=>{ const x=new Date(d+'T12:00:00'); x.setDate(x.getDate()+n); return x.toLocaleDateString('sv-SE') };
     for(let a=d0;a<=dc;){ const wd=(new Date(a+'T12:00:00').getDay()+6)%7; let b=addD(a,6-wd); if(b>dc) b=dc; const F=L.filter(o=>dayOf(o.fa)>=a&&dayOf(o.fa)<=b);
-      row(bw,[dm(a)+' – '+dm(b),String(rec.filter(o=>dayOf(o.ca)>=a&&dayOf(o.ca)<=b).length),String(F.length),String(new Set(F.map(code)).size),mload?eur2(sumM(F.flatMap(o=>repMat(o)||[]),'total')):'…']); a=addD(b,1) }
+      row(bw,[dm(a)+' – '+dm(b),String(rec.filter(o=>dayOf(o.ca)>=a&&dayOf(o.ca)<=b).length),String(F.length),String(new Set(F.map(repInmK)).size),mload?eur2(sumM(F.flatMap(o=>repMat(o)||[]),'total')):'…']); a=addD(b,1) }
     row(bw,['Total',String(rec.length),String(L.length),String(pisos),mload?eur2(sumM(allM,'total')):'…'],'tot'); doc.append(tw);
   }
   if(WK&&L.length){ /* órdenes por inmueble y tipo de trabajo */
     doc.append(H('Órdenes por inmueble · '+per)); const cnt={}; L.forEach(o=>{ const c=code(o); cnt[c]=(cnt[c]||0)+1 }); const mx=Math.max(...Object.values(cnt)); const bars=el('div','rf-bars');
     Object.keys(cnt).sort().forEach(c=>{ const r=el('div'), bar=el('i'), f=el('u'); f.style.width=Math.round(cnt[c]/mx*100)+'%'; bar.append(f); r.append(el('span',null,c),bar,el('em',null,String(cnt[c]))); bars.append(r) }); doc.append(bars);
     doc.append(H('Tipo de trabajo')); const [t1,b1]=table(['Tipo de trabajo','Registros','Órdenes']); const sv={}; L.forEach(o=>{ const s=o.sv||'Sin clasificar'; (sv[s]=sv[s]||[]).push('AMJ-'+o.ref) });
-    Object.keys(sv).sort((x,y)=>sv[y].length-sv[x].length||x.localeCompare(y)).forEach(s=>row(b1,[s,String(sv[s].length),sv[s].join(', ')])); doc.append(t1) }
+    Object.keys(sv).sort((x,y)=>sv[y].length-sv[x].length||(x<y?-1:x>y?1:0)).forEach(s=>row(b1,[s,String(sv[s].length),sv[s].join(', ')])); doc.append(t1) }
   if(WK&&help){ /* cupo: un bloque por periodo contractual que toque el informe */
     if(!pers.length) doc.append(el('p','rf-note','Periodo sin cupo contractual: no se computan avisos.'));
     pers.forEach(P=>{ const disp=Math.max(P.tot-P.n,0), fin=!live||P.upto<dc;
       doc.append(H('Visitas y saldo del cupo · periodo '+dm(P.a)+' – '+dm(P.b)));
       doc.append(el('p','rf-intro',(fin?'Al cierre del ':'A fecha de ')+dm(P.upto)+': '+P.n+' avisos consumidos de '+P.tot+' y '+disp+' disponibles. Cupo: 1 inmueble + día de inicio = 1 aviso.'+(P.sinInm.length?' Pendientes de clasificar (sin inmueble identificado, no consumen aviso): '+P.sinInm.map(o=>'AMJ-'+o.ref).join(', ')+'.':'')));
-      const g={}; P.inR.forEach(o=>{ (g[vkey(o)]=g[vkey(o)]||[]).push(o) }); const multi=Object.values(g).filter(a=>a.length>1).sort((a,b)=>dayOf(a[0].sa)<dayOf(b[0].sa)?-1:1);
+      const g={}; P.inR.forEach(o=>{ (g[vkey(o)]=g[vkey(o)]||[]).push(o) }); const kv=a=>dayOf(a[0].sa)+'|'+repInm(a[0]), multi=Object.values(g).filter(a=>a.length>1).sort((a,b)=>kv(a)<kv(b)?-1:kv(a)>kv(b)?1:0);
       if(multi.length){ const lista=a=>{ const r=a.map(o=>'AMJ-'+o.ref).sort(); return r.length>1?r.slice(0,-1).join(', ')+' y '+r[r.length-1]:r[0] };
-        const q=el('p','rf-intro'); q.append(el('b',null,P.inR.length+' órdenes atendidas en '+Object.keys(g).length+' visitas. '),document.createTextNode('Varias órdenes en un mismo inmueble y día cuentan como 1 aviso: '+multi.map(a=>code(a[0])+' el '+dm(dayOf(a[0].sa))+' ('+lista(a)+')').join('; ')+'.')); doc.append(q) }
+        const q=el('p','rf-intro'); q.append(el('b',null,P.inR.length+' órdenes atendidas en '+Object.keys(g).length+' visitas. '),document.createTextNode('Varias órdenes en un mismo inmueble y día cuentan como 1 aviso: '+multi.map(a=>repInm(a[0])+' el '+dm(dayOf(a[0].sa))+' ('+lista(a)+')').join('; ')+'.')); doc.append(q) }
       const [t2,b2]=table(['Fecha','Órdenes / visitas','Avisos consumidos']); const byD={}; P.inR.forEach(o=>{ const d=dayOf(o.sa); (byD[d]=byD[d]||[]).push(o) });
       Object.keys(byD).sort().forEach(d=>row(b2,[dm(d),byD[d].sort((x,y)=>x.ref-y.ref).map(o=>'AMJ-'+o.ref).join(', '),String(new Set(byD[d].map(vkey)).size)]));
       if(P.from>P.a) row(b2,['Hasta '+dm(new Date(new Date(P.from+'T12:00:00')-864e5).toLocaleDateString('sv-SE')),'Saldo anterior del periodo',String(new Set(P.V.filter(o=>dayOf(o.sa)<P.from).map(vkey)).size)]);
@@ -171,34 +178,40 @@ function repFmt(L,d0,d1,WK,QN,MS,CL){ const addD0=(d,n)=>{ const x=new Date(d+'T
   const [tb,bd]=table((WK?['Fecha']:[]).concat(['Orden / inmueble','Incidencia y actuación','Estado']),'det');
   L.forEach(o=>{ const c=el('td'); const nov=sinEjec(o);
     c.append(el('b',null,(o.work||'(sin descripción)').replace(/\.?$/,'. ')),document.createTextNode(o.report||'El técnico no escribió informe.')); c.style.whiteSpace='pre-wrap';
-    row(bd,(WK?[td(dm(dayOf(o.fa)),'nwr')]:[]).concat([td('AMJ-'+o.ref+' · '+code(o)+(one?'':' · '+clName(o.cl)),'nwr'),c,td(nov?'Sin posibilidad de ejecución':'Finalizada')])) });
+    row(bd,(WK?[td(dm(dayOf(o.fa)),'nwr')]:[]).concat([td('AMJ-'+o.ref+' · '+code(o)+(one?'':' · '+clName(repCli(o))),'nwr'),c,td(nov?'Sin posibilidad de ejecución':'Finalizada')])) });
   if(!L.length){ const e=td('No hay órdenes finalizadas en el periodo.'); e.colSpan=WK?4:3; row(bd,[e]) }
   doc.append(tb);
   if(L.length) doc.append(H('Fotos de las intervenciones'));
   L.forEach(o=>{ const g=el('div','rf-og'); g.append(el('div','rf-oh',(WK?dm(dayOf(o.fa))+' · ':'')+'AMJ-'+o.ref+' · '+(o.work||'').replace(/\.$/,'')+' · '+code(o))); const w=repPhotos(o); w.className='rf-ph'; g.append(w); g._m={id:o.id}; doc.append(g) });
   if(WK){ /* materiales */
     if((QN||MS)&&mload){ const withM=L.filter(o=>repMat(o).length), tot=sumM(allM,'total'), oT=o=>sumM(repMat(o),'total');
-      doc.append(H('Informe de materiales')); const p=el('p','rf-intro'); p.append(el('b',null,eur2(tot)+' en materiales en '+withM.length+' de las '+L.length+' órdenes finalizadas.'),document.createTextNode(' Importes según el ticket de compra o la autorización de AMJ, con el IVA desglosado.')); doc.append(p);
+      doc.append(H('Informe de materiales')); const p=el('p','rf-intro'); p.append(el('b',null,eur2(tot)+' en materiales en '+withM.length+' de las '+L.length+' órdenes finalizadas.'),document.createTextNode(' Importes según el ticket de compra o, si no lo hay, la autorización de AMJ. La base y el IVA se muestran solo cuando constan en el ticket.')); doc.append(p);
       const bx=el('div','rf-kp'); const kk=(v,t)=>{ const d=el('div'); d.append(el('b',null,v),el('span',null,t)); bx.append(d) };
-      { const conD=allM.filter(m=>m.subtotal!=null&&m.iva!=null), sinD=allM.filter(m=>m.subtotal==null||m.iva==null); kk(eur2(tot),'total materiales, IVA incluido'+(conD.length?' ('+(sinD.length?'con ticket: ':'')+'base '+eur2(sumM(conD,'subtotal'))+' · IVA '+eur2(sumM(conD,'iva'))+(sinD.length?'; autorizado sin ticket: '+eur2(sumM(sinD,'total')):'')+')':sinD.length?' (importes autorizados, sin desglose)':'')) } kk(withM.length+' / '+L.length,'órdenes con materiales'+(L.length?' ('+Math.round(withM.length/L.length*100)+' %)':''));
+      { /* la etiqueta sale de la FUENTE registrada en el servidor (ticket o autorización), no de si hay desglose */
+        const tD=allM.filter(m=>m.fuente==='ticket'&&m.subtotal!=null&&m.iva!=null), tS=allM.filter(m=>m.fuente==='ticket'&&(m.subtotal==null||m.iva==null)), au=allM.filter(m=>m.fuente!=='ticket');
+        const partes=[tD.length?'con ticket: base '+eur2(sumM(tD,'subtotal'))+' · IVA '+eur2(sumM(tD,'iva')):'',tS.length?'con ticket sin desglose: '+eur2(sumM(tS,'total')):'',au.length?'autorizado por AMJ sin ticket: '+eur2(sumM(au,'total')):''].filter(Boolean);
+        kk(eur2(tot),'total materiales, IVA incluido'+(partes.length?' ('+partes.join('; ')+')':'')) } kk(withM.length+' / '+L.length,'órdenes con materiales'+(L.length?' ('+Math.round(withM.length/L.length*100)+' %)':''));
       kk(withM.length?eur2(tot/withM.length):'—','gasto medio por orden con materiales'); kk(L.length?eur2(tot/L.length):'—','gasto medio por orden finalizada'); doc.append(bx);
-      const spend=(title,keyf)=>{ const g={}; withM.forEach(o=>{ const k=keyf(o); (g[k]=g[k]||{n:0,t:0}); g[k].n++; g[k].t+=oT(o) }); const ks=Object.keys(g).sort((x,y)=>g[y].t-g[x].t); if(!ks.length) return; const mx=g[ks[0]].t||1;
+      const spend=(title,keyf)=>{ const g={}; withM.forEach(o=>{ const k=keyf(o); (g[k]=g[k]||{n:0,t:0}); g[k].n++; g[k].t+=oT(o) }); const ks=Object.keys(g).sort((x,y)=>g[y].t-g[x].t||(x<y?-1:x>y?1:0)); if(!ks.length) return; const mx=g[ks[0]].t||1;
         doc.append(H(title)); const w=el('div','rf-sp'); ks.forEach(k=>{ const r=el('div'), bar=el('i'), f=el('u'); f.style.width=Math.round(g[k].t/mx*100)+'%'; bar.append(f); r.append(el('span',null,k),el('small',null,g[k].n+(g[k].n===1?' orden':' órdenes')),bar,el('b',null,eur2(g[k].t)),el('em',null,(tot?Math.round(g[k].t/tot*100):0)+' %')); w.append(r) }); doc.append(w) };
       spend('Gasto por tipo de trabajo',o=>o.sv||'Sin clasificar'); spend('Gasto por inmueble',code);
       if(withM.length){ doc.append(H('Por técnico')); const [t5,b5]=table(['Técnico','Órdenes con material','Total']); const g={}; withM.forEach(o=>{ const k=(o.tc||'—').trim().split(/\s+/)[0]; /* ante el cliente, solo el nombre de pila */ (g[k]=g[k]||{n:0,t:0}); g[k].n++; g[k].t+=oT(o) });
-        Object.keys(g).sort((x,y)=>g[y].t-g[x].t).forEach(k=>row(b5,[k,String(g[k].n),eur2(g[k].t)])); row(b5,['Total',String(withM.length),eur2(tot)],'tot'); doc.append(t5) } }
-    doc.append(H('Relación detallada de materiales'),el('p','rf-intro','Materiales de cada orden, por el importe del ticket de compra o el autorizado por AMJ. La base y el IVA son los del ticket; los importes autorizados sin ticket van solo por su total.'));
+        Object.keys(g).sort((x,y)=>g[y].t-g[x].t||(x<y?-1:x>y?1:0)).forEach(k=>row(b5,[k,String(g[k].n),eur2(g[k].t)])); row(b5,['Total',String(withM.length),eur2(tot)],'tot'); doc.append(t5) } }
+    doc.append(H('Relación detallada de materiales'),el('p','rf-intro','Materiales de cada orden, por el importe del ticket de compra o, si no lo hay, el autorizado por AMJ. La base y el IVA son los del ticket cuando constan en él; si no constan, o el importe es autorizado sin ticket, va solo el total.'));
     const [t3,b3]=table(['Fecha','Orden / inmueble','Trabajo y material','Base','IVA','Total'],'mat'); const withM=L.filter(o=>repMat(o).length);
     if(!mload){ const e=td('Cargando materiales…'); e.colSpan=6; row(b3,[e]) } else if(!withM.length){ const e=td((MS?'Este mes':'Esta '+PW)+' no se han declarado materiales.'); e.colSpan=6; row(b3,[e]) }
-    withM.forEach(o=>{ const M=repMat(o); M.forEach((m,i)=>{ const c=el('td'); if(!i) c.append(el('b',null,(o.work||'').replace(/\.$/,'')),el('br')); c.append(document.createTextNode((m.description||'—')+(Number(m.quantity||1)!==1?' × '+Number(m.quantity):'')));
+    withM.forEach(o=>{ const M=repMat(o); M.forEach((m,i)=>{ const c=el('td'); if(!i) c.append(el('b',null,(o.work||'').replace(/\.$/,'')),el('br')); c.append(document.createTextNode((m.description||'—')+(m.fuente==='ticket'?' (ticket)':' (autorizado por AMJ, sin ticket)')));
         row(b3,[td(i?'':dm(dayOf(o.fa)),'nwr'),td(i?'':'AMJ-'+o.ref+' · '+code(o),'nwr'),c,td(m.subtotal==null?'—':eur2(m.subtotal),'r'),td(m.iva==null?'—':eur2(m.iva),'r'),td(eur2(m.total),'r')]) });
       if(M.length>1) row(b3,['','','Subtotal AMJ-'+o.ref,td(eur2(sumM(M,'subtotal')),'r'),td(eur2(sumM(M,'iva')),'r'),td(eur2(sumM(M,'total')),'r')],'sub') });
     if(mload&&withM.length){ const des=allM.every(m=>m.subtotal!=null&&m.iva!=null); row(b3,['','','Total '+DELA,td(des?eur2(sumM(allM,'subtotal')):'—','r'),td(des?eur2(sumM(allM,'iva')):'—','r'),td(eur2(sumM(allM,'total')),'r')],'tot') }
     doc.append(t3);
-    const open=real().filter(o=>cls.includes(o.cl)&&dayOf(o.ca)<=dc&&repAbiertaAl(o,dc)); /* mismo criterio que el KPI «abiertas» */
-    if(open.length){ doc.append(H(live?'Órdenes abiertas a fecha de '+dm(dc):'Órdenes abiertas al cierre '+DELA)); const [t4,b4]=table(['Orden / inmueble','Trabajo','Estado']); open.forEach(o=>row(b4,[td('AMJ-'+o.ref+' · '+code(o),'nwr'),o.work,o.st==='completed'?'Terminada después, el '+dm(dayOf(o.fa)):o.st==='cancelled'?'Abierta en esa fecha':(STATUS[o.st]||[o.st])[0]])); doc.append(t4) } }
+    const open=real().filter(o=>cls.includes(repCli(o))&&dayOf(o.ca)<=dc&&repAbiertaAl(o,dc)); /* mismo criterio que el KPI «abiertas» */
+    if(open.length){ doc.append(H(live?'Órdenes abiertas a fecha de '+dm(dc):'Órdenes abiertas al cierre '+DELA)); const [t4,b4]=table(['Orden / inmueble','Trabajo','Estado']); open.sort((x,y)=>x.ref-y.ref).forEach(o=>{ /* estado: en un informe en curso, el de hoy; en uno cerrado, «abierta en esa fecha» y, si se terminó después, cuándo (primer cierre posterior al corte) */
+      const x=CTX&&CTX[o.id], ev=x&&Array.isArray(x.eventos)&&x.eventos.length?x.eventos:null, des=ev?(ev.filter(e=>e.a==='finish'&&dayOf(e.t)>dc)[0]||{}).t:(o.st==='completed'?o.fa:null);
+      row(b4,[td('AMJ-'+o.ref+' · '+code(o),'nwr'),o.work,des?'Terminada después, el '+dm(dayOf(des)):live?(o.st==='rejected'?'Pendiente de asignar':(STATUS[o.st]||[o.st])[0]):'Abierta en esa fecha']) }); doc.append(t4) } }
   const ft=el('div','rf-ft'); ft.append(el('span',null,'amjmaintenance.es · Informe para '+cname),el('span',null,'ASSET MAINTENANCE · JUST IN TIME')); doc.append(ft);
-  doc._rep={cl:cls.join('+'),cname,one,tipo:MS?'mensual':QN?'quincenal':WK?'semanal':'diario',d0,d1,per:MS?per:WK?per.replace(/^.* · /,''):dlong,ids:L.map(o=>o.id),refs:L.map(o=>o.ref),mat:WK,dc};
+  if(perErr||perCarga){ const w=el('div','rf-aviso',perErr?'No se han podido leer los periodos contractuales en el servidor, así que no se sabe si este cliente tiene cupo. El informe NO se puede enviar así: recarga el panel y, si se repite, avisa.':'Comprobando los periodos contractuales en el servidor…'); doc.insertBefore(w,doc.firstChild) }
+  doc._rep={bloqueo:perErr?'No se han podido leer los periodos contractuales en el servidor: no se sabe si el cliente tiene cupo. No se puede enviar el informe. Recarga el panel.':perCarga?'Todavía se están comprobando los periodos contractuales. Espera unos segundos y vuelve a pulsar «Enviar por email».':'',cl:cls.join('+'),cname,one,tipo:MS?'mensual':QN?'quincenal':WK?'semanal':'diario',d0,d1,per:MS?per:WK?per.replace(/^.* · /,''):dlong,ids:L.map(o=>o.id),refs:L.map(o=>o.ref),mat:WK,dc};
   return doc }
 /* ---------- envío de informes por email (función amj-informes-enviar: PDF adjunto) ---------- */
 const REP_COPIA='antonio@amjmaintenance.es';
@@ -260,6 +273,7 @@ function repPendOpen(){ repSendClose(); const fdl=d=>d.slice(8,10)+'/'+d.slice(5
   document.body.append(ov) }
 function repSendOpen(){
   const docs=[...document.querySelectorAll('#obody .rf')].filter(d=>d._rep); if(!docs.length) return;
+  { const bl=docs.map(d=>d._rep.bloqueo).find(Boolean); if(bl){ repMsg=bl; renderSec(); return } }
   if(!CTX||docs.some(d=>!d._rep.ids.every(id=>CTX[id]&&CTX[id].mat_informe))){ repMsg=CTX===undefined?'Todavía se están comprobando los importes con el servidor. Espera unos segundos y vuelve a pulsar «Enviar por email».':'No se puede enviar: el servidor no ha dado el importe de materiales de todas las órdenes del informe.'; renderSec(); return }
   if(docs.some(d=>!d._rep.ids.every(id=>id in MED&&id in MAT))){ repMsg='Todavía se están cargando las fotos y los materiales. Espera unos segundos y vuelve a pulsar «Enviar por email».'; renderSec(); return }
   repSendClose();
@@ -337,7 +351,7 @@ function repSendOpen(){
 async function repCtxReload(ids){ const a=await rpc('amj_admin_informe_ordenes',{}); if(!Array.isArray(a)) throw new Error('respuesta incompleta del servidor'); const N={}; a.forEach(x=>N[x.id]=x);
   const f=x=>JSON.stringify(x&&x.mat_informe||null); if(ids.some(id=>!N[id]||!N[id].mat_informe)) throw new Error('falta el importe de materiales de alguna orden'); const cambian=ids.filter(id=>f(CTX&&CTX[id])!==f(N[id])); CTX=N; return cambian }
 function repMat(o){ const x=CTX&&CTX[o.id], mi=x&&x.mat_informe; if(!mi||!(Number(mi.total)>0)) return []; const D=MAT[o.id]||[], n=v=>v==null?null:Number(v);
-  return [{description:D.map(m=>(m.description||'—')+(Number(m.quantity||1)!==1?' × '+Number(m.quantity):'')).join('; ')||'Materiales',quantity:1,subtotal:n(mi.base),iva:n(mi.iva),total:Number(mi.total),fuente:mi.fuente}] }
+  return [{description:D.map(m=>(m.description||'—')+(Number(m.quantity||1)!==1?' × '+Number(m.quantity):'')).sort().join('; ')||'Materiales',quantity:1,subtotal:n(mi.base),iva:n(mi.iva),total:Number(mi.total),fuente:mi.fuente}] }
 const repMatListo=L=>!!CTX&&L.every(o=>CTX[o.id]&&CTX[o.id].mat_informe);
 function repMatCheck(L){ const box=el('div','repmsg repmat');
   if(!repMatListo(L)){ if(!L.some(o=>(MAT[o.id]||[]).length)&&CTX!==null) return null; box.textContent=CTX===undefined?'Materiales: comprobando importes…':'Materiales: el servidor no ha dado el importe de materiales de todas las órdenes. El informe no muestra materiales y no se puede enviar.'; return box }
@@ -589,7 +603,7 @@ const SECS={
    const ctl=el('div','repctl');
    const seg=el('div','seg'); [['dia','Diario'],['sem','Semanal'],['qui','Quincenal'],['mes','Mensual'],['tot','Total']].forEach(([k,t])=>{ const on=k!=='tot'; const b=el('button',repPer===k?'on':null,t+(on?'':' · por definir')); b.disabled=!on; b.onclick=()=>{ repPer=k; renderSec() }; seg.append(b) });
    const scl=el('select'); scl.append(new Option('Todos los clientes',''));
-   [...new Set(real().map(o=>o.cl))].sort((x,y)=>clName(x).localeCompare(clName(y))).forEach(c=>scl.append(new Option(clName(c),c))); scl.value=repCl; scl.onchange=()=>{ repCl=scl.value; renderSec() };
+   [...new Set(real().map(o=>repCli(o)))].sort((x,y)=>clName(x).localeCompare(clName(y))).forEach(c=>scl.append(new Option(clName(c),c))); scl.value=repCl; scl.onchange=()=>{ repCl=scl.value; renderSec() };
    const dIn=el('input'); dIn.type='date'; dIn.value=repDay; dIn.max=todayStr(); dIn.onchange=()=>{ if(dIn.value){ repDay=dIn.value; renderSec() } };
    const addD=(d,n)=>{ const x=new Date(d+'T12:00:00'); x.setDate(x.getDate()+n); return x.toLocaleDateString('sv-SE') };
    const mv=n=>{ let v=addD(repDay,n); if(MS){ const a=repDay.slice(0,8); v=n<0?addD(a+'01',-1).slice(0,8)+'01':addD(a+'28',4).slice(0,8)+'01'; if(v.slice(0,7)===todayStr().slice(0,7)) v=todayStr() } if(QN){ const dd=+repDay.slice(8), a=repDay.slice(0,8); v=n<0?addD(a+(dd<=15?'01':'16'),-1):(dd<=15?a+'16':addD(a+'28',4).slice(0,8)+'01') } if(v<=todayStr()||n<0){ repDay=v>todayStr()?todayStr():v; renderSec() } };
@@ -608,23 +622,23 @@ const SECS={
    if(QN){ const a=repDay.slice(0,8); if(+repDay.slice(8)<=15){ d0=a+'01'; d1=a+'15' } else { d0=a+'16'; d1=addD(addD(a+'28',4).slice(0,8)+'01',-1) } }
    const fd=(d,o)=>new Date(d+'T12:00:00').toLocaleDateString('es-ES',o);
    const per=MS?(m=>m.charAt(0).toUpperCase()+m.slice(1))(fd(d1,{month:'long',year:'numeric'})):WK?((QN?(d0.slice(8)==='01'?'1.ª':'2.ª')+' quincena · del ':'Semana del ')+fd(d0,{day:'numeric',month:'long'})+' al '+fd(d1,{day:'numeric',month:'long',year:'numeric'})):(()=>{ const f=fd(repDay,{weekday:'long',day:'numeric',month:'long',year:'numeric'}); return f.charAt(0).toUpperCase()+f.slice(1) })();
-   const dcL=d1>todayStr()?todayStr():d1, LA=real().filter(o=>{ if(repCl&&o.cl!==repCl) return false; const c=repCierreAl(o,dcL); return !!c&&repEstadoAl(o,dcL)!=='cancelada'&&dayOf(c.t)>=d0&&dayOf(c.t)<=dcL }).map(o=>{ const c=repCierreAl(o,dcL); return c.t===o.fa?o:Object.assign({},o,{fa:c.t}) }).sort((x,y)=>new Date(x.fa)-new Date(y.fa)||x.ref-y.ref);
+   const dcL=d1>todayStr()?todayStr():d1, LA=real().filter(o=>{ if(repCl&&repCli(o)!==repCl) return false; const c=repCierreAl(o,dcL); return !!c&&repEstadoAl(o,dcL)!=='cancelada'&&dayOf(c.t)>=d0&&dayOf(c.t)<=dcL }).map(o=>{ const c=repCierreAl(o,dcL); return c.t===o.fa?o:Object.assign({},o,{fa:c.t}) }).sort((x,y)=>new Date(x.fa)-new Date(y.fa)||x.ref-y.ref);
    /* también los clientes con actividad anterior aunque no tengan cierres en el periodo: su informe (a cero) debe poder consultarse */
-   const wcl=[...new Set((WK?real().filter(o=>(o.cl==='HELP'||o.cl==='ENSO')&&o.st!=='cancelled'&&dayOf(o.ca)<=d1&&(!repCl||o.cl===repCl)):LA).map(o=>o.cl).concat(LA.map(o=>o.cl)))].sort((x,y)=>clName(x).localeCompare(clName(y)));
+   const wcl=[...new Set((WK?real().filter(o=>(repCli(o)==='HELP'||repCli(o)==='ENSO')&&o.st!=='cancelled'&&dayOf(o.ca)<=d1&&(!repCl||repCli(o)===repCl)):LA).map(o=>repCli(o)).concat(LA.map(o=>repCli(o))))].sort((x,y)=>clName(x).localeCompare(clName(y)));
    selN=()=>WK?wcl.filter(c=>repSelW.has(c)).length:LA.filter(o=>repSel.has(o.id)).length;
    if(repView&&!selN()) repView=false;
    const L=repView?LA.filter(o=>repSel.has(o.id)):LA, SEL=!repView; updSel();
    const wrap=docs=>{ const w=el('div','repdoc rfw'); docs.forEach(d=>w.append(d)); return w };
    if(WK){ repEnsure(LA.map(o=>o.id)); repCtx(); repPers();
-     if(repView){ const sel=wcl.filter(c=>repSelW.has(c)), chk=repMatCheck(LA.filter(o=>sel.includes(o.cl))); return [ctl].concat(chk?[chk]:[],[src('Así lo verá el cliente: el informe completo '+DELA+'.'),wrap(wcl.filter(c=>repSelW.has(c)).map(c=>repFmt(LA.filter(o=>o.cl===c),d0,d1,true,QN,MS,c)))]) }
+     if(repView){ const sel=wcl.filter(c=>repSelW.has(c)), chk=repMatCheck(LA.filter(o=>sel.includes(repCli(o)))); return [ctl].concat(chk?[chk]:[],[src('Así lo verá el cliente: el informe completo '+DELA+'.'),wrap(wcl.filter(c=>repSelW.has(c)).map(c=>repFmt(LA.filter(o=>repCli(o)===c),d0,d1,true,QN,MS,c)))]) }
      const card=el('div','repdoc'); card.append(el('h3','reph3','Informe '+ADJ+' · '+per));
      const tb=el('table','reptb sel wk'), hr=el('tr'); ['','Cliente','Órdenes finalizadas','Inmuebles','Materiales con IVA'].forEach((h,i)=>hr.append(el('th',i?null:'ck',h))); const th=el('thead'); th.append(hr); const bd=el('tbody');
      if(!wcl.length){ const r=el('tr'), e=el('td','empty','No hay órdenes terminadas '+(MS?'este mes':'esta '+PW)+'.'); e.colSpan=5; r.append(e); bd.append(r) }
-     wcl.forEach(c=>{ const G=LA.filter(o=>o.cl===c), r=el('tr'), k=el('td','ck'), ck=el('input'); ck.type='checkbox'; ck.checked=repSelW.has(c); ck.onchange=()=>{ ck.checked?repSelW.add(c):repSelW.delete(c); updSel() }; k.append(ck);
+     wcl.forEach(c=>{ const G=LA.filter(o=>repCli(o)===c), r=el('tr'), k=el('td','ck'), ck=el('input'); ck.type='checkbox'; ck.checked=repSelW.has(c); ck.onchange=()=>{ ck.checked?repSelW.add(c):repSelW.delete(c); updSel() }; k.append(ck);
        r.append(k,el('td','b',clName(c)),el('td',null,String(G.length)),el('td',null,String(new Set(G.map(o=>o.piso||o.ad)).size)),el('td',null,G.every(o=>o.id in MAT)?eur2(G.reduce((a,o)=>a+repMat(o).reduce((x,m)=>x+Number(m.total||0),0),0)):'…')); bd.append(r) });
      tb.append(th,bd); card.append(tb);
      return [ctl,src('Informe '+ADJ+' completo de cada cliente, con todos los trabajos '+DELA+(MS?' y sus KPI':'')+'. Marca la casilla del cliente y pulsa «Ver» para verlo como lo recibirá, o «Enviar por email».'),card] }
-   if(repView){ repEnsure(L.map(o=>o.id)); repCtx(); const cs=new Set(L.map(o=>o.cl)); const out=[ctl]; if(cs.size>1) out.push(el('div','repmsg','Has marcado órdenes de '+cs.size+' clientes distintos: para enviar, marca solo las de un cliente.')); out.push(src('Así lo verá el cliente: solo las órdenes que has marcado.'),wrap([repFmt(L,repDay,repDay,false)])); return out }
+   if(repView){ repEnsure(L.map(o=>o.id)); repCtx(); repPers(); const cs=new Set(L.map(o=>repCli(o))); const out=[ctl]; if(cs.size>1) out.push(el('div','repmsg','Has marcado órdenes de '+cs.size+' clientes distintos: para enviar, marca solo las de un cliente.')); out.push(src('Así lo verá el cliente: solo las órdenes que has marcado.'),wrap([repFmt(L,repDay,repDay,false)])); return out }
    repEnsure(L.map(o=>o.id));
    const doc=el('div','repdoc'); const hd=el('div','rephd'); const lg=document.querySelector('.brand img'); if(lg){ const im=el('img'); im.src=lg.src; im.alt='AMJ'; hd.append(im) }
    const tt=el('div'); tt.append(el('h2',null,(WK?'Informe semanal':'Informe diario')+(repCl?' · '+clName(repCl):'')),el('div','repsub',per+' · '+L.length+(L.length===1?' orden terminada':' órdenes terminadas')+(SEL?' · marca las que quieres ver y enviar':''))); hd.append(tt); doc.append(hd);
@@ -634,7 +648,7 @@ const SECS={
      const vis=new Set(L.map(o=>(o.piso||o.ad)+'|'+dayOf(o.sa||o.fa))).size;
      const box=el('div','repkp'); const k=(v,t)=>{ const d=el('div'); d.append(el('b',null,v),el('span',null,t)); box.append(d) };
      k(String(L.length),'órdenes terminadas'); k(String(vis),'visitas (piso + día)'); k(loaded?eur2(matTot):'…','materiales con IVA');
-     if(repCl==='HELP'){ const m0=d1.slice(0,8)+'01'; const mv2=new Set(real().filter(o=>o.cl==='HELP'&&o.st!=='cancelled'&&o.sa&&dayOf(o.sa)>=m0&&dayOf(o.sa)<=d1).map(o=>(o.piso||o.ad)+'|'+dayOf(o.sa))).size;
+     if(repCl==='HELP'){ const m0=d1.slice(0,8)+'01'; const mv2=new Set(real().filter(o=>repCli(o)==='HELP'&&o.st!=='cancelled'&&o.sa&&dayOf(o.sa)>=m0&&dayOf(o.sa)<=d1).map(o=>(o.piso||o.ad)+'|'+dayOf(o.sa))).size;
        k(mv2+' / 100','cupo del mes consumido al '+fd(d1,{day:'2-digit',month:'2-digit'})); k(String(Math.max(100-mv2,0)),'avisos disponibles') }
      doc.append(box); if(repCl==='HELP') doc.append(el('div','repnote','Cupo: 1 inmueble + día de inicio = 1 aviso (mismo criterio que el control de avisos).')) }
    /* tabla de órdenes */
@@ -644,7 +658,7 @@ const SECS={
    L.forEach(o=>{ const tr=el('tr'); const r=el('td'); const tx=el('div',o.report?null:'muted',o.report||'(El técnico no escribió informe)'); tx.style.whiteSpace='pre-wrap'; r.append(tx,repPhotos(o));
      if(SEL){ const c=el('td','ck'), ck=el('input'); ck.type='checkbox'; ck.checked=repSel.has(o.id); ck.onchange=()=>{ ck.checked?repSel.add(o.id):repSel.delete(o.id); updSel() }; cks.push(ck); c.append(ck); tr.append(c) }
      if(WK) tr.append(el('td','nwr',fd(dayOf(o.fa),{day:'2-digit',month:'2-digit'})));
-     tr.append(el('td','b','AMJ-'+o.ref),el('td',null,clName(o.cl)),el('td','b',o.piso||o.ad||'—'),r); bd.append(tr) });
+     tr.append(el('td','b','AMJ-'+o.ref),el('td',null,clName(repCli(o))),el('td','b',o.piso||o.ad||'—'),r); bd.append(tr) });
    tb.append(bd); doc.append(tb);
    /* materiales (semanal) */
    if(WK){ doc.append(el('h3','reph3','Materiales por orden'));
@@ -657,7 +671,7 @@ const SECS={
      if(loaded&&withM.length){ const all=withM.flatMap(o=>MAT[o.id]); const t=el('tr','tot'); const c=el('td',null,'TOTAL MATERIALES DE LA SEMANA'); c.colSpan=4; t.append(c,el('td','r',eur2(all.reduce((a,m)=>a+Number(m.subtotal||0),0))),el('td','r',eur2(all.reduce((a,m)=>a+Number(m.iva||0),0))),el('td','r',eur2(all.reduce((a,m)=>a+Number(m.total||0),0)))); mb.append(t) }
      mt.append(mb); doc.append(mt, el('div','repnote','Materiales declarados por los técnicos.'));
      /* abiertas */
-     const open=real().filter(o=>!['completed','cancelled'].includes(o.st)&&(!repCl||o.cl===repCl)&&dayOf(o.ca)<=d1);
+     const open=real().filter(o=>!['completed','cancelled'].includes(o.st)&&(!repCl||repCli(o)===repCl)&&dayOf(o.ca)<=d1);
      if(open.length){ doc.append(el('h3','reph3','Órdenes abiertas al cierre de la semana')); const ot=el('table','reptb'), oh=el('tr'); ['Orden','Código piso','Trabajo','Estado'].forEach(h=>oh.append(el('th',null,h))); const oth=el('thead'); oth.append(oh); ot.append(oth); const ob=el('tbody');
        open.forEach(o=>{ const tr=el('tr'); tr.append(el('td','b','AMJ-'+o.ref),el('td','b',o.piso||o.ad||'—'),el('td',null,o.work),el('td',null,(STATUS[o.st]||[o.st])[0])); ob.append(tr) }); ot.append(ob); doc.append(ot) } }
    doc.append(el('div','repft','ASSET MAINTENANCE · JUST IN TIME'));

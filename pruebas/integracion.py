@@ -1,14 +1,24 @@
 """Prueba conjunta panel + función (bloques 1 y 2). El panel real habla con la función real, que usa dobles de Supabase y del correo.
 Antes, en el repositorio amj-tecnicos-ios:  deno run --no-lock --allow-net=127.0.0.1,0.0.0.0:8000 --allow-env --allow-read tests/informes/envio/servidor_local.ts
 Después:  python3 pruebas/integracion.py"""
-import asyncio, base64, json, urllib.request
+import asyncio, base64, json, os, urllib.request
+CASOS = os.environ.get("AMJ_GUARDAR_CASOS")   # carpeta donde guardar, como casos para las pruebas del servidor, los informes reales que genera el panel
 exec(open(__file__.replace("integracion.py", "envio_panel.py"), encoding="utf-8").read().split("ok = lambda")[0])
 TOKEN = "x" * 12 + "." + base64.b64encode(json.dumps({"sub": "admin-1"}).encode()).decode() + "." + "y" * 12
 async def main():
     async with async_playwright() as p:
         b = await p.chromium.launch(); pg = await b.new_page(viewport={"width": 1300, "height": 950}); errores = []; pg.on("pageerror", lambda e: errores.append(str(e)))
+        ULT = {}
+        def guarda(nombre):
+            if not CASOS: return
+            caso = dict(ULT["pdf"]); caso["modelo"] = json.loads(urllib.request.urlopen("http://127.0.0.1:54398/prueba/modelo").read()); caso["hoy"] = caso["informe"]["corte"] if caso["informe"]["corte"] < caso["informe"]["hasta"] else "2026-11-30"
+            open(os.path.join(CASOS, nombre + ".json"), "w", encoding="utf-8").write(json.dumps(caso, ensure_ascii=False, indent=1))
         async def a_local(route):
             if route.request.method == "OPTIONS": return await route.fulfill(status=204, headers={"Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "*"})
+            try:
+                c = json.loads(route.request.post_data)
+                if c.get("accion") == "pdf": ULT["pdf"] = {"informe": c["informe"], "docs": c["docs"]}
+            except Exception: pass
             r = urllib.request.Request("http://127.0.0.1:8000/", data=route.request.post_data.encode(), headers={"Authorization": "Bearer " + TOKEN, "apikey": "pk", "Content-Type": "application/json"}, method="POST")
             try: x = urllib.request.urlopen(r); st, body = x.status, x.read()
             except urllib.error.HTTPError as e: st, body = e.code, e.read()
@@ -33,7 +43,13 @@ async def main():
         await pg.fill(".rpml input >> nth=0", "destinatario@prueba.example"); await pg.locator(".rpma .out").first.click()
         await pg.wait_for_function("document.querySelector('.rpmv canvas')||document.querySelector('.rpms.err')"); est = await pg.inner_text(".rpms")
         rec = await pg.evaluate("()=>[...document.querySelectorAll('#obody .rf-kp > div')].map(d=>d.querySelector('b').textContent+' | '+d.querySelector('span').textContent)")
-        assert await pg.locator(".rpmv canvas").count() > 0, (est, rec); print("OK · informe mensual del panel aceptado entero por el servidor ·", len(rec), "recuadros recalculados:", "; ".join(rec))
+        assert await pg.locator(".rpmv canvas").count() > 0, (est, rec); print("OK · informe mensual del panel aceptado entero por el servidor ·", len(rec), "recuadros recalculados:", "; ".join(rec)); guarda("mensual_sin_cupo")
+        for clave, nombre in (("sem", "semanal"), ("qui", "quincenal")):
+            await pg.evaluate("c=>__t(`repSendClose(); repPer='${c}'; repDay='2026-11-19'; repCl='FICT'; repSelW=new Set(['FICT']); repView=true; renderSec()`)", clave); await pg.wait_for_timeout(500); await pg.evaluate("()=>__t('repSendOpen()')")
+            await pg.fill(".rpml input >> nth=0", "destinatario@prueba.example"); await pg.locator(".rpma .out").first.click()
+            await pg.wait_for_function("document.querySelector('.rpmv canvas')||document.querySelector('.rpms.err')"); est = await pg.inner_text(".rpms")
+            assert await pg.locator(".rpmv canvas").count() > 0, (nombre, est); print("OK · informe", nombre, "del panel aceptado entero por el servidor (cabecera, periodo, textos, tablas y fotos)")
+        await pg.evaluate("()=>__t(`repSendClose(); repPer='mes'; repDay='2026-11-19'; repView=true; renderSec()`)"); await pg.wait_for_timeout(500)
         await pg.evaluate("()=>{ __t('repSendClose()'); const d=[...document.querySelectorAll('#obody .rf-kp > div')].find(d=>d.textContent.includes('menos de 48 h')); d.querySelector('b').textContent='50 %'; __t('repSendOpen()') }")
         await pg.fill(".rpml input >> nth=0", "destinatario@prueba.example"); await pg.locator(".rpma .out").first.click(); await pg.wait_for_function("document.querySelector('.rpms.err')"); est = await pg.inner_text(".rpms")
         assert "no coincide con los datos del servidor" in est and await pg.locator(".rpmv canvas").count() == 0, est; print("OK · recuadro alterado en el navegador: el servidor no sella el PDF ·", est[:150])
@@ -46,5 +62,5 @@ async def main():
         await pg.fill(".rpml input >> nth=0", "destinatario@prueba.example"); await pg.locator(".rpma .out").first.click()
         await pg.wait_for_function("document.querySelector('.rpmv canvas')||document.querySelector('.rpms.err')"); est = await pg.inner_text(".rpms"); t = await pg.inner_text("#obody")
         assert await pg.locator(".rpmv canvas").count() > 0 and "2 / 100" in t and "Cupo del periodo: 100. Saldo disponible al" in t and "9,50 €" in t, (est, t[:1500])
-        print("OK · informe mensual con cupo (2 / 100, tabla de visitas) y materiales con ticket (9,50 € = 7,85 + 1,65): panel y servidor coinciden y el PDF se sella"); await b.close()
+        print("OK · informe mensual con cupo (2 / 100, tabla de visitas) y materiales con ticket (9,50 € = 7,85 + 1,65): panel y servidor coinciden y el PDF se sella"); guarda("mensual_con_cupo"); await b.close()
 asyncio.run(main()); srv.shutdown()

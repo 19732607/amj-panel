@@ -16,7 +16,7 @@ srv = http.server.ThreadingHTTPServer(("127.0.0.1", 8791), functools.partial(H, 
 PREPARA = """()=>{ __t(`session={access_token:'x',expires_at:Date.now()+9e9};
   O=normalize([1,2].map(i=>({id:i,reference:900+i,revision:1,status:'completed',service:'Fontanería',description:'FICT-P'+i+' | Trabajo ficticio '+i,address:'',locality:'Ciudad',
     created_at:'2026-11-18T09:00:00Z',started_at:'2026-11-19T09:00:00Z',finished_at:'2026-11-19T10:00:00Z',technician_name:'Nombre Apellido',technician_id:'t1',customer_name:'FICT',report:'Informe ficticio.'})));
-  computeTags(); RV=[]; CTX={}; [1,2].forEach(i=>{ CTX[i]={id:i,mat_informe:{total:0,fuente:'sin_materiales'}}; MED[i]=[{id:'m'+i,object_path:'o/'+i+'.jpg'}]; THU['m'+i]='data:image/gif;base64,R0lGODlhAQABAAAAACw='; MAT[i]=[] });
+  computeTags(); RV=[]; PERS=[]; CTX={}; [1,2].forEach(i=>{ CTX[i]={id:i,mat_informe:{total:0,fuente:'sin_materiales'}}; MED[i]=[{id:'m'+i,object_path:'o/'+i+'.jpg'}]; THU['m'+i]='data:image/gif;base64,R0lGODlhAQABAAAAACw='; MAT[i]=[] });
   document.querySelectorAll('[hidden]').forEach(e=>e.hidden=false); document.getElementById('nw').hidden=true; document.getElementById('login').style.display='none'; lastOk=1;
   sec='informes'; repPer='dia'; repDay='2026-11-19'; repCl=''; repSel=new Set([1,2]); repView=true; renderSec(); repSendOpen();`) }"""
 ok = lambda c, m: (print("OK ·", m) if c else (_ for _ in ()).throw(AssertionError(m)))
