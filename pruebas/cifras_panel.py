@@ -29,7 +29,7 @@ async def main():
                 {"id": 7, "eventos": [{"a": "finish", "t": "2026-10-31T23:30:00Z"}], "mat_informe": S},
                 {"id": 8, "inmueble": "P6", "eventos": [{"a": "finish", "t": "2026-10-15T10:00:00Z"}, {"a": "admin_voided_finish", "t": "2026-11-03T09:00:00Z"}, {"a": "admin_reopen", "t": "2026-11-03T09:00:00Z"}, {"a": "finish", "t": "2026-11-04T10:00:00Z"}], "mat_informe": S}])
         await pg.route("**/rest/v1/rpc/amj_admin_informe_ordenes", contexto)
-        await pg.goto("http://127.0.0.1:8791/beta/index.html"); await pg.evaluate(PREPARA); await pg.wait_for_function("()=>__t('CTX')===null")
+        await pg.goto("http://127.0.0.1:8791/beta/index.html?entorno=ensayo"); await pg.wait_for_selector("#ensayo-banda.ok"); await pg.evaluate(PREPARA); await pg.wait_for_function("()=>__t('CTX')===null")
         lista = await pg.inner_text(".reptb"); ok("HELPHOUSING3" in lista and "ENSO0" in lista, "un cliente sin cierres en el periodo también se puede consultar (ENSO, 0 órdenes)")
         ver = lambda cl: pg.evaluate("c=>{ __t(`repSelW=new Set(['${c}']); repView=true; renderSec()`); return document.querySelector('#obody .rf').innerText }", cl)
         kpi = lambda t, etq: next(x for x in t.replace("\n\n", "\n").split("\n") if etq in x) if etq in t else ""

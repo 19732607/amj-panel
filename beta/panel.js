@@ -4,26 +4,39 @@
 (function(){
 'use strict';
 /* ---------- entorno ----------
-   Sin más, el panel habla con PRODUCCIÓN (como siempre). La única excepción es el MODO ENSAYO, que se abre con «?entorno=ensayo»:
-   · solo funciona servido desde este ordenador (localhost); publicado en internet, se niega;
-   · exige una configuración (ensayo/config.js) cuyo proyecto sea EXACTAMENTE AMJ-Pruebas; si falta, está incompleta o apunta a otro
-     proyecto, el panel se detiene ANTES de enviar credenciales o cualquier otra petición. En modo ensayo nunca se cae a producción. */
+   PRODUCCIÓN solo desde el panel publicado. Una copia abierta desde este ordenador (localhost) es SIEMPRE una copia de ensayo:
+   · sin «?entorno=ensayo» se detiene (nunca usa producción desde local);
+   · con el parámetro exige ensayo/config.js con el proyecto EXACTO de AMJ-Pruebas, su dirección exacta y su clave pública, que se
+     comprueba contra una referencia independiente de la configuración: la huella SHA-256 escrita aquí abajo;
+   · rechaza claves privilegiadas; y los servicios simulados solo valen en un navegador de pruebas automáticas, con dirección y clave fijas.
+   Si algo falla, el panel se detiene ANTES de enviar credenciales o cualquier otra petición. */
 const PROD={url:'https://biwjrbcfupmbpoxnrolt.supabase.co',clave:'sb_publishable_ywkQpKdfMksufdqWkv-fyA_OtcxTXEm'}, REF_PROD='biwjrbcfupmbpoxnrolt', REF_PRUEBAS='gktignfhalpwhewhkzya';
-const ENSAYO=document.documentElement.dataset.amjModo==='ensayo';
-function entornoEnsayo(){ const c=window.AMJ_ENTORNO, local=h=>h==='localhost'||h==='127.0.0.1';
-  if(!local(location.hostname)) throw new Error('El modo ensayo solo funciona abierto desde este ordenador (localhost). Aquí no se usa.');
-  if(!c||typeof c!=='object') throw new Error('Falta la configuración del ensayo (ensayo/config.js). No se envía nada.');
-  if(c.proyecto!==REF_PRUEBAS) throw new Error('La configuración del ensayo no es la de AMJ-Pruebas ('+REF_PRUEBAS+'). No se envía nada.');
-  let u; try{ u=new URL(String(c.url||'')) }catch(e){ throw new Error('La dirección del servidor del ensayo no es válida. No se envía nada.') }
-  if(String(c.url).includes(REF_PROD)||String(c.clave||'')===PROD.clave) throw new Error('La configuración del ensayo apunta a PRODUCCIÓN. No se envía nada.');
-  const dobles=c.dobles_locales===true&&local(u.hostname)&&u.protocol==='http:'; /* solo para las pruebas con servicios simulados en este ordenador */
-  if(!dobles&&u.origin!=='https://'+REF_PRUEBAS+'.supabase.co') throw new Error('La dirección del ensayo no es la de AMJ-Pruebas. No se envía nada.');
-  if(typeof c.clave!=='string'||c.clave.length<20||/^PEGAR/.test(c.clave)) throw new Error('Falta la clave pública de AMJ-Pruebas en la configuración del ensayo. No se envía nada.');
-  if(!dobles&&c.clave.split('.').length===3){ let ref=''; try{ ref=JSON.parse(atob(c.clave.split('.')[1].replace(/-/g,'+').replace(/_/g,'/'))).ref||'' }catch(e){} if(ref!==REF_PRUEBAS) throw new Error('La clave pública del ensayo no es de AMJ-Pruebas. No se envía nada.') }
-  return {url:u.origin,clave:c.clave,dobles} }
-let ENT=PROD, ENT_ERR=''; if(ENSAYO){ try{ ENT=entornoEnsayo() }catch(e){ ENT=null; ENT_ERR=e.message } }
-const SB=ENT?ENT.url:'', KEY=ENT?ENT.clave:'';
-const exigeEntorno=()=>{ if(!ENT) throw new Error(ENT_ERR||'Entorno no válido') }; /* delante de TODA petición: sin entorno válido no sale nada */
+/* Huella de la clave pública de AMJ-Pruebas. La clave consta en el repositorio del servidor (supabase/pruebas/extremo_a_extremo.mjs y el entorno «staging» de la app). */
+const HUELLA_CLAVE_PRUEBAS='21c924873eec27c6bc6dce1053284100f9fa58f0a70af29e6205fcf4b032e7e8';
+const DOBLES={url:'http://127.0.0.1:54399',clave:'clave-publica-ficticia-0001'}; /* servicios simulados de las pruebas locales: únicos valores admitidos */
+const esLocal=h=>h==='localhost'||h==='127.0.0.1', LOCAL=esLocal(location.hostname), ENSAYO=document.documentElement.dataset.amjModo==='ensayo';
+const huellaTexto=async t=>[...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(t)))].map(x=>x.toString(16).padStart(2,'0')).join('');
+async function entornoEnsayo(){ const c=window.AMJ_ENTORNO, NO=' No se envía nada.';
+  if(!c||typeof c!=='object') throw new Error('Falta la configuración del ensayo (ensayo/config.js).'+NO);
+  if(c.proyecto!==REF_PRUEBAS) throw new Error('La configuración del ensayo no es la de AMJ-Pruebas ('+REF_PRUEBAS+').'+NO);
+  const clave=typeof c.clave==='string'?c.clave:''; let u; try{ u=new URL(String(c.url||'')) }catch(e){ throw new Error('La dirección del servidor del ensayo no es válida.'+NO) }
+  if(String(c.url).includes(REF_PROD)||clave===PROD.clave) throw new Error('La configuración del ensayo apunta a PRODUCCIÓN.'+NO);
+  { let rol=''; if(clave.split('.').length===3){ try{ rol=JSON.parse(atob(clave.split('.')[1].replace(/-/g,'+').replace(/_/g,'/'))).role||'' }catch(e){} }
+    if(/^sb_secret_/.test(clave)||/service_role|supabase_admin/.test(rol)||/service_role/.test(clave)) throw new Error('La clave de la configuración es una clave PRIVILEGIADA (de servidor). En el panel solo puede ir la clave pública.'+NO) }
+  if(c.dobles_locales===true){ /* solo en las pruebas automáticas de este ordenador */
+    if(navigator.webdriver!==true) throw new Error('Los servicios simulados solo se pueden usar en las pruebas automáticas, no en un navegador normal.'+NO);
+    if(String(c.url)!==DOBLES.url||clave!==DOBLES.clave) throw new Error('La configuración de servicios simulados no es la de las pruebas locales.'+NO);
+    return {url:DOBLES.url,clave:DOBLES.clave,dobles:true,fase:c.fase==='A'||c.fase==='B'?c.fase:null} }
+  if(u.origin!=='https://'+REF_PRUEBAS+'.supabase.co'||String(c.url).replace(/\/$/,'')!==u.origin) throw new Error('La dirección del ensayo no es la de AMJ-Pruebas.'+NO);
+  if(clave.length<20||/^PEGAR/.test(clave)) throw new Error('Falta la clave pública de AMJ-Pruebas en la configuración del ensayo.'+NO);
+  if(await huellaTexto(clave)!==HUELLA_CLAVE_PRUEBAS) throw new Error('La clave pública de la configuración no es la de AMJ-Pruebas.'+NO);
+  return {url:u.origin,clave,dobles:false,fase:c.fase==='B'?'B':'A'} } /* fase A (por defecto): el envío debe estar apagado */
+let ENT=null, ENT_ERR='', SB='', KEY='';
+if(!LOCAL&&!ENSAYO){ ENT=PROD; SB=PROD.url; KEY=PROD.clave }
+else if(!LOCAL) ENT_ERR='El modo ensayo solo funciona abierto desde este ordenador (localhost). Aquí no se usa.';
+else if(!ENSAYO) ENT_ERR='Esta copia local del panel es solo para el ensayo con AMJ-Pruebas. Ábrela con «?entorno=ensayo». Desde aquí no se usa producción. No se envía nada.';
+const entornoListo=ENSAYO&&LOCAL?entornoEnsayo().then(e=>{ ENT=e; SB=e.url; KEY=e.clave }).catch(e=>{ ENT=null; ENT_ERR=e.message||'Entorno no válido' }):Promise.resolve();
+const exigeEntorno=()=>{ if(!ENT) throw new Error(ENT_ERR||'Entorno todavía sin comprobar') }; /* delante de TODA petición: sin entorno válido no sale nada */
 /* En ensayo, la sesión debe ser de AMJ-Pruebas: el emisor del pase de sesión lo dice. */
 const sesionDeEnsayoValida=tok=>{ if(!ENSAYO||(ENT&&ENT.dobles)) return true; try{ return JSON.parse(atob(tok.split('.')[1].replace(/-/g,'+').replace(/_/g,'/'))).iss==='https://'+REF_PRUEBAS+'.supabase.co/auth/v1' }catch(e){ return false } };
 const TZ='Europe/Madrid', POLL=15000, PAGE=100, MAXPAGES=200, STORE='amj.panel.session'+(ENSAYO?'.ensayo':'');
@@ -261,7 +274,8 @@ function repLogo(){ const im=document.querySelector('.brand img'); if(!im||!im.n
 let pdfjsP=null;
 const repVend=f=>new URL('vendor/'+f,document.baseURI).href;
 function repPdfJs(){ return pdfjsP||(pdfjsP=import(repVend('pdf.min.mjs')).then(L=>{ L.GlobalWorkerOptions.workerSrc=repVend('pdf.worker.min.mjs'); return L }).catch(()=>{ pdfjsP=null; throw new Error('no se pudo cargar el visor') })) }
-async function repPdfView(bytes,host){ host.textContent='Abriendo el PDF…'; const L=await repPdfJs(), pdf=await L.getDocument({data:bytes.slice(0),standardFontDataUrl:repVend('standard_fonts/'),isEvalSupported:false}).promise; host.textContent='';
+async function repPdfView(bytes,host){ host.textContent='Abriendo el PDF…'; const datos=bytes.slice(0), h=await repSha(datos); /* huella de los bytes EXACTOS que se entregan al visor */
+  const L=await repPdfJs(), pdf=await L.getDocument({data:datos,standardFontDataUrl:repVend('standard_fonts/'),isEvalSupported:false}).promise; host.textContent=''; host.dataset.sha256=h;
   const wCss=Math.min(host.clientWidth-24,900), dpr=Math.min(window.devicePixelRatio||1,2);
   for(let n=1;n<=pdf.numPages;n++){ const pg=await pdf.getPage(n), v0=pg.getViewport({scale:1}), vp=pg.getViewport({scale:wCss/v0.width*dpr}), cv=document.createElement('canvas'); cv.width=Math.round(vp.width); cv.height=Math.round(vp.height); cv.style.width=wCss+'px'; cv.className='rpmp'; host.append(cv); await pg.render({canvas:cv,canvasContext:cv.getContext('2d'),viewport:vp}).promise } }
 async function repCall(body){ const r=await fetch(SB+'/functions/v1/amj-informes-enviar',{method:'POST',headers:{...(await authHdr()),'Content-Type':'application/json'},body:JSON.stringify(body)}); let j={}; try{ j=await r.json() }catch(e){} if(!r.ok||!j.ok){ const er=new Error(j.error||('HTTP '+r.status)); er.codigo=j.codigo||''; er.http=r.status; er.j=j; throw er } return j }
@@ -322,7 +336,18 @@ function repSendOpen(){
     const tx=fld('Texto del correo',el('textarea')); tx.rows=9; tx.value='Buenas tardes,\n\nAdjuntamos el informe '+R.tipo+' de servicio de '+R.cname+' '+perTxt+'.\n\nEn el PDF encontrará el detalle de las intervenciones por inmueble, con el informe del técnico y las fotografías de cada trabajo'+(R.mat?', y la relación de materiales':'')+'.\n\nQuedamos a su disposición para cualquier aclaración.\n\nUn saludo,\nAntonio Martins Junior\nAMJ Maintenance · Asset maintenance, just in time';
     const cc=el('input'); cc.type='checkbox'; cc.checked=false; /* la copia a AMJ se marca sola al comprobar el PDF, salvo en la versión de pruebas (solo destinatarios ficticios) */ const ccl=el('label','rpmk'), cct=el('span',null,' Enviarme una copia a '+REP_COPIA); ccl.append(cc,cct); card.append(ccl);
     const st=el('div','rpms'), bar=el('div','rpma'), bv=el('button','out','📄 Ver el PDF que se enviará'), bs=el('button','go','✉ Enviar ahora'); bar.append(bv,bs); card.append(bar,st);
-    const base=()=>({docs:[model],logo,archivo,informe:{cliente:R.cl,tipo:R.tipo,desde:R.d0,hasta:R.d1,corte:R.dc,refs:R.refs}}), say=(t,k)=>{ st.textContent=t; st.className='rpms'+(k?' '+k:'') }, busy=b=>{ bv.disabled=bs.disabled=b };
+    const base=()=>({docs:[model],logo,archivo,informe:{cliente:R.cl,tipo:R.tipo,desde:R.d0,hasta:R.d1,corte:R.dc,refs:R.refs}}), say=(t,k)=>{ st.textContent=t; st.className='rpms'+(k?' '+k:'') }, busy=b=>{ bv.disabled=b; bs.disabled=b||!gate.ok };
+    /* ENSAYO: antes de poder pulsar «Enviar» se lee de la función desplegada (lectura sin efectos) si el envío real está apagado.
+       Fase A: solo se sigue con envío real = no y solo ficticios = sí. Sin respuesta, o con un valor inesperado, no se puede enviar. */
+    const conPuerta=!!(ENSAYO&&ENT&&ENT.fase), gate={ok:!conPuerta}, gl=el('div','rpmg'); if(conPuerta) card.insertBefore(gl,bar);
+    const compruebaApagado=async()=>{ if(!conPuerta) return true; gate.ok=false; bs.disabled=true; gl.className='rpmg'; gl.textContent='Comprobando en la función desplegada si el envío real está apagado…';
+      try{ const j=await repCall({accion:'estado'}); if(typeof j.envio_real!=='boolean'||typeof j.solo_ficticios!=='boolean') throw new Error('la función no ha dicho con claridad si el envío está apagado');
+        const bien=ENT.fase==='A'?(j.envio_real===false&&j.solo_ficticios===true):j.solo_ficticios===true;
+        gl.textContent='Función desplegada · envío real: '+(j.envio_real?'ENCENDIDO':'apagado')+' · solo destinatarios ficticios: '+(j.solo_ficticios?'sí':'NO')+(bien?'':' · FASE '+ENT.fase+' DETENIDA: '+(ENT.fase==='A'?'el envío debe estar apagado y admitir solo destinatarios ficticios.':'solo se admiten destinatarios ficticios.')+' No se puede pulsar «Enviar».');
+        gl.classList.add(bien?'ok':'alto'); gate.ok=bien }
+      catch(e){ gl.textContent='No se ha podido comprobar en la función desplegada si el envío está apagado ('+(e.message||'sin respuesta')+'). No se puede pulsar «Enviar».'; gl.classList.add('alto'); gate.ok=false }
+      bs.disabled=!gate.ok; return gate.ok };
+    compruebaApagado();
     /* Un solo PDF: el que se genera en «Ver» es el que se ve, se descarga y se adjunta. `prev` guarda esos bytes y el sello del servidor. */
     let prev=null, incierto=false; const fot=el('div','rpmf'); card.insertBefore(fot,st);
     const pintaFotos=()=>{ fot.textContent=''; fot.className='rpmf'; if(!prev) return; const f=prev.fotos;
@@ -337,7 +362,7 @@ function repSendOpen(){
         else { dd.append(document.createTextNode('Destinatarios autorizados de este cliente: '+D.autorizados.join(', ')+'. ')); const u=el('a','rpmlk','Usar estos'); u.href='#'; u.onclick=ev=>{ ev.preventDefault(); to.value=D.autorizados.join(', '); reinicia() }; dd.append(u) }
         fot.append(dd) }
       const dl=el('a','rpmlk','Descargar este PDF'); dl.href=prev.url; dl.download=prev.archivo; fot.append(dl); /* fijo junto a los datos del archivo: los mensajes de estado no lo borran */
-      fot.append(el('div','rpmh2','Archivo: '+prev.archivo+' · '+prev.paginas+(prev.paginas===1?' página':' páginas')+' · '+(prev.bytes.length/1048576).toFixed(1).replace('.',',')+' MB · huella '+prev.sha.slice(0,12)+'…')) };
+      fot.append(el('div','rpmh2','Archivo: '+prev.archivo+' · '+prev.paginas+(prev.paginas===1?' página':' páginas')+' · '+(prev.bytes.length/1048576).toFixed(1).replace('.',',')+' MB · huella '+prev.sha.slice(0,12)+'…')); fot.lastChild.title='SHA-256 completo: '+prev.sha; fot.lastChild.dataset.sha256=prev.sha };
     const reinicia=()=>{ if(bs.dataset.ok==='1'&&!bs.disabled){ bs.dataset.ok=''; bs.textContent='✉ Enviar ahora' } if(incierto){ incierto=false; say('Has cambiado los datos del envío: ya no es un reintento del anterior. Tendrás que confirmarlo de nuevo.') } };
     bv.onclick=async()=>{ busy(true); say('Comprobando fotos y materiales…'); prev=null; pintaFotos(); reinicia();
       try{ let cambian; try{ cambian=await repRefresh(R.ids) }catch(e0){ say('No se han podido releer las fotos y los materiales ('+(e0.message||'error de conexión')+'). No se genera el PDF con datos sin comprobar: vuelve a intentarlo.','err'); return }
@@ -350,7 +375,7 @@ function repSendOpen(){
         prev={bytes:u,b64:j.pdf_b64,sha,sello:j.sello,caduca:j.caduca,cliente:j.cliente,prefijo:j.ordenes_por_prefijo,dest:j.destinatarios,fotos:j.fotos,paginas:j.paginas,archivo:j.archivo||(archivo+'.pdf'),url}; pintaFotos();
         say('PDF listo. Es el archivo que se adjuntará: revísalo antes de enviar. ','ok');
         const old=card.querySelector('.rpmv'); if(old) old.remove(); const host=el('div','rpmv'); card.append(host); box.classList.add('wide'); host.scrollIntoView({behavior:'smooth',block:'nearest'});
-        try{ await repPdfView(u,host) }catch(e2){ host.textContent='No se pudo mostrar aquí el PDF ('+e2.message+'). Usa «Descargar este PDF».' } }
+        try{ await repPdfView(u,host); if(host.dataset.sha256!==sha) throw new Error('el visor ha recibido un archivo distinto del sellado') }catch(e2){ host.textContent='No se pudo mostrar aquí el PDF ('+e2.message+'). Usa «Descargar este PDF».' } }
       catch(e){ const J=e.j||{}, L2=(t,a)=>a&&a.length?' '+t+': '+a.map(r=>'AMJ-'+r).join(', ')+'.':'';
         say('No se pudo generar el PDF: '+e.message+(e.codigo==='CLIENTE_NO_COINCIDE'?L2('De otro cliente',J.ordenes_ajenas)+L2('De prueba',J.ordenes_de_prueba)+L2('Canceladas',J.ordenes_canceladas)+L2('No encontradas',J.ordenes_no_encontradas)+(J.fotos_ajenas?' Fotos que no son de estas órdenes: '+J.fotos_ajenas+'.':''):''),'err') } finally{ busy(false) } };
     bs.onclick=async()=>{ const para=to.value.split(/[,;\s]+/).map(v=>v.trim()).filter(Boolean); if(!para.length||!para.every(v=>/^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(v))){ say('Escribe un correo de destinatario válido.','err'); to.focus(); return }
@@ -361,7 +386,7 @@ function repSendOpen(){
         if(fuera.length){ say(prev.dest.solo_ficticios?'Versión de pruebas: solo destinatarios ficticios (nombre@prueba.example). No vale: '+fuera.join(', ')+'.':A.length?'No están autorizados para este cliente: '+fuera.join(', ')+'. Autorizados: '+prev.dest.autorizados.join(', ')+'.':'Este cliente no tiene destinatarios autorizados.','err'); return } }
       if(Date.now()>prev.caduca&&!incierto){ prev=null; pintaFotos(); const v=card.querySelector('.rpmv'); if(v) v.remove(); say('La vista previa ha caducado (30 minutos). Pulsa otra vez «Ver el PDF que se enviará», revísalo y vuelve a enviar.','err'); return }
       if(bs.dataset.ok!=='1'&&!incierto){ bs.dataset.ok='1'; bs.textContent='✉ Confirmar: enviar a '+para.join(', '); say('Pulsa otra vez para confirmar el envío a '+para.join(', ')+(prev.fotos.faltan?'. Atención: en el PDF faltan '+prev.fotos.faltan+' fotos.':'.')); return }
-      busy(true); say('Enviando…');
+      busy(true); say('Enviando…'); if(!(await compruebaApagado())){ busy(false); say('Envío detenido: la función desplegada no confirma el estado exigido para este ensayo.','err'); return }
       try{ const j=await repCall({accion:'enviar',sello:prev.sello,pdf_b64:prev.b64,para,copia:cc.checked?REP_COPIA:'',asunto:su.value.trim(),texto:tx.value.trim()}); try{ localStorage.setItem(KEY2,para.join(', ')) }catch(e){}
         if(j.registro_pendiente){ incierto=true; repPend(true); busy(false); bs.dataset.ok='1'; bs.textContent='↻ Reintentar el mismo envío'; say(j.aviso||'El correo ha salido, pero no ha quedado anotado. Pulsa «Reintentar el mismo envío»: no se enviará otra vez.','err'); return }
         incierto=false; repPend(true); say('Enviado a '+j.para.join(', ')+(cc.checked?' · copia a '+REP_COPIA:'')+' · adjunto '+j.archivo+' (huella '+j.sha256.slice(0,12)+'…).','ok'); bs.textContent='✓ Enviado'; bv.disabled=false; [to,su,tx,cc].forEach(i=>i.disabled=true) }
@@ -903,7 +928,11 @@ document.addEventListener('drop',async e=>{ if($('nw').hidden||!NW.addFiles) ret
     for(const u of urls){ try{ const r=await fetch(u); const bl=await r.blob(); if(/^image\//.test(bl.type)) files.push(new File([bl],'foto.'+bl.type.split('/')[1],{type:bl.type})) }catch(err){} } }
   NW.addFiles(files,'Esa aplicación no deja arrastrar la foto al navegador (WhatsApp lo bloquea). Haz clic derecho en la foto → «Copiar imagen» y luego clic derecho en el recuadro de fotos → «Pegar».') },true);
 $('fab').onclick=nwOpen; $('newo').onclick=nwOpen; $('nwx').onclick=nwClose; $('nw').onclick=e=>{ if(e.target===$('nw')) nwClose() };
-if(ENSAYO){ const b=el('div','ensayo-banda',ENT?'ENSAYO · AMJ-Pruebas ('+(ENT.dobles?'servicios simulados en este ordenador':REF_PRUEBAS)+') · no es producción':'ENSAYO DETENIDO · '+ENT_ERR); b.id='ensayo-banda'; document.body.prepend(b);
-  if(!ENT){ ['le','lp','lb'].forEach(i=>{ const x=$(i); if(x) x.disabled=true }); $('lerr').textContent=ENT_ERR } }
-session=ENT?loadSession():null; if(session) start();
+/* Hasta que el entorno esté comprobado, el formulario de entrada queda bloqueado y no se lee ninguna sesión guardada. */
+const bloqueaEntrada=b=>['le','lp','lb'].forEach(i=>{ const x=$(i); if(x) x.disabled=b });
+if(ENSAYO||LOCAL) bloqueaEntrada(true);
+entornoListo.then(()=>{
+  if(ENSAYO||LOCAL){ const b=el('div','ensayo-banda'+(ENT?' ok':' alto'),ENT?'ENSAYO · AMJ-Pruebas ('+(ENT.dobles?'servicios simulados en este ordenador':REF_PRUEBAS)+')'+(ENT.fase?' · fase '+ENT.fase+(ENT.fase==='A'?': envío apagado':''):'')+' · no es producción':'PANEL DETENIDO · '+ENT_ERR); b.id='ensayo-banda'; document.body.prepend(b);
+    if(ENT) bloqueaEntrada(false); else $('lerr').textContent=ENT_ERR }
+  session=ENT?loadSession():null; if(session) start() });
 })();

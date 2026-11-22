@@ -3,7 +3,7 @@ OJO: esta prueba intercepta las peticiones del panel y pone ella las cabeceras C
 no el inicio de sesión ni el CORS. Eso lo prueba pruebas/ensayo_local.py, sin interceptar nada.
 Antes, en el repositorio amj-tecnicos-ios:  deno run --no-lock --allow-net=127.0.0.1,0.0.0.0:8000 --allow-env --allow-read tests/informes/envio/servidor_local.ts
 Después:  python3 pruebas/integracion.py"""
-import asyncio, base64, json, os, urllib.request
+import asyncio, base64, json, os, re, urllib.parse, urllib.request
 CASOS = os.environ.get("AMJ_GUARDAR_CASOS")   # carpeta donde guardar, como casos para las pruebas del servidor, los informes reales que genera el panel
 exec(open(__file__.replace("integracion.py", "envio_panel.py"), encoding="utf-8").read().split("ok = lambda")[0])
 TOKEN = "x" * 12 + "." + base64.b64encode(json.dumps({"sub": "admin-1"}).encode()).decode() + "." + "y" * 12
@@ -26,11 +26,13 @@ async def main():
             except urllib.error.HTTPError as e: st, body = e.code, e.read()
             await route.fulfill(status=st, body=body, headers={"content-type": "application/json", "Access-Control-Allow-Origin": "*"})
         await pg.route("**/functions/v1/amj-informes-enviar", a_local)
-        async def datos(route): await route.fulfill(json=[] if "amj_order_materials" in route.request.url else [{"id": "m%d" % i, "order_id": i, "object_path": "o/%d.jpg" % i} for i in (1, 2)])
+        async def datos(route):
+            u = route.request.url; ids = [i for i in (1, 2, 3) if re.search(r"in\.\(([\d,]*,)?%d(,[\d,]*)?\)" % i, urllib.parse.unquote(u))]
+            await route.fulfill(json=[] if "amj_order_materials" in u else [{"id": "m%d" % i, "order_id": i, "object_path": "o/%d.jpg" % i} for i in ids])
         CTXS = [{"id": i, "mat_informe": {"total": 0, "fuente": "sin_materiales"}} for i in (1, 2)]; PERS = []
         await pg.route("**/rest/v1/rpc/amj_admin_informe_ordenes", lambda r: r.fulfill(json=CTXS))
         await pg.route("**/rest/v1/amj_service_media*", datos); await pg.route("**/rest/v1/amj_order_materials*", datos)
-        await pg.goto("http://127.0.0.1:8791/beta/index.html"); await pg.evaluate(PREPARA)
+        await pg.goto("http://127.0.0.1:8791/beta/index.html?entorno=ensayo"); await pg.wait_for_selector("#ensayo-banda.ok"); await pg.evaluate(PREPARA)
         await pg.fill(".rpml input >> nth=0", "destinatario@prueba.example"); await pg.locator(".rpma .out").first.click(); await pg.wait_for_selector(".rpmv canvas")
         vista = await pg.evaluate("async()=>{ const a=document.querySelector('.rpmf a[download]'); const u=new Uint8Array(await (await fetch(a.href)).arrayBuffer()); const h=await crypto.subtle.digest('SHA-256',u); return [...new Uint8Array(h)].map(x=>x.toString(16).padStart(2,'0')).join('') }")
         fotos = await pg.inner_text(".rpmf"); paginas = await pg.locator(".rpmv canvas").count()
@@ -64,5 +66,34 @@ async def main():
         await pg.fill(".rpml input >> nth=0", "destinatario@prueba.example"); await pg.locator(".rpma .out").first.click()
         await pg.wait_for_function("document.querySelector('.rpmv canvas')||document.querySelector('.rpms.err')"); est = await pg.inner_text(".rpms"); t = await pg.inner_text("#obody")
         assert await pg.locator(".rpmv canvas").count() > 0 and "2 / 100" in t and "Cupo del periodo: 100. Saldo disponible al" in t and "9,50 €" in t, (est, t[:1500])
-        print("OK · informe mensual con cupo (2 / 100, tabla de visitas) y materiales con ticket (9,50 € = 7,85 + 1,65): panel y servidor coinciden y el PDF se sella"); guarda("mensual_con_cupo"); await b.close()
+        print("OK · informe mensual con cupo (2 / 100, tabla de visitas) y materiales con ticket (9,50 € = 7,85 + 1,65): panel y servidor coinciden y el PDF se sella"); guarda("mensual_con_cupo")
+        # ---- Cuarta revisión, punto 5 · recorrido completo del HISTÓRICO: una orden cerrada el 20/10 y CANCELADA el 08/11. El informe de octubre
+        #      (corte 31/10) debe generarse entero, con su cupo, y el servidor debe aceptarlo. El modelo «del servidor» está escrito aquí a mano
+        #      (lo que devuelve amj_informes_modelo para ese caso, comprobado en PostgreSQL local con la orden 921): no sale del panel.
+        def modelo_oct(cancelada_antes):
+            orden = {"ref": 995, "codigo": "FICT-P3", "direccion": "", "trabajo": "Trabajo del histórico", "informe": "Informe ficticio.", "inmueble": "P3", "alta": "2026-10-19T09:00:00Z", "inicio": "2026-10-20T09:00:00Z", "cierre": "2026-10-20T10:00:00Z",
+                     "servicio": "Fontanería", "ciudad": "Ciudad", "tecnico": "Nombre", "mat_lineas": [], "reabierta_despues": False, "sin_ejecucion": False, "mat": {"total": 0, "fuente": "sin_materiales"}, "fotos": ["o/3.jpg"]}
+            n = 0 if cancelada_antes else 1
+            return {"cliente": "FICTICIO", "cliente_prefijo": "FICT", "cliente_nombre": "Cliente Ficticio", "con_cupo": True, "cerradas": [] if cancelada_antes else [orden], "abiertas": [], "recibidas": n,
+                    "recibidas_ordenes": [] if cancelada_antes else [{"ref": 995, "dia": "2026-10-19", "servicio": "Fontanería", "ciudad": "Ciudad", "cerrada": True}], "empezadas": [] if cancelada_antes else ["2026-10-20"],
+                    "cupos": [{"desde": "2026-10-19", "hasta": "2026-10-31", "cupo": 42, "consumidos": n, "disponibles": 42 - n, "visitas": [] if cancelada_antes else [{"dia": "2026-10-20", "inmueble": "P3", "refs": [995]}], "pendientes_clasificar": []}]}
+        fija = lambda m: urllib.request.urlopen(urllib.request.Request("http://127.0.0.1:54398/prueba", data=json.dumps({"modelo": m}).encode(), method="POST"))
+        PERS[:] = [{"cliente": "FICT", "desde": "2026-10-19", "hasta": "2026-10-31", "cupo": 42}, {"cliente": "FICT", "desde": "2026-11-01", "hasta": "2026-11-30", "cupo": 100}]
+        async def octubre(cancelacion):
+            CTXS[:] = [{"id": 1, "inmueble": "P1", "mat_informe": {"total": 0, "fuente": "sin_materiales"}}, {"id": 2, "inmueble": "P2", "mat_informe": {"total": 0, "fuente": "sin_materiales"}},
+                       {"id": 3, "inmueble": "P3", "sin_ejecucion": False, "eventos": [{"a": "finish", "t": "2026-10-20T10:00:00Z"}, {"a": "cancel", "t": cancelacion}], "mat_informe": {"total": 0, "fuente": "sin_materiales"}}]
+            await pg.evaluate("""()=>__t(`repSendClose(); if(!O.some(o=>o.ref===995)){ O=O.concat(normalize([{id:3,reference:995,revision:1,status:'cancelled',service:'Fontanería',description:'FICT-P3 | Trabajo del histórico',address:'',locality:'Ciudad',
+              created_at:'2026-10-19T09:00:00Z',started_at:'2026-10-20T09:00:00Z',finished_at:'2026-10-20T10:00:00Z',technician_name:'Nombre Apellido',technician_id:'t1',customer_name:'FICT',report:'Informe ficticio.'}])); computeTags() }
+              MED[3]=[{id:'m3',object_path:'o/3.jpg'}]; THU.m3='data:image/gif;base64,R0lGODlhAQABAAAAACw='; MAT[3]=[]; PERS=undefined; persP=null; CTX=undefined; ctxP=null; repPer='mes'; repDay='2026-10-15'; repCl='FICT'; repSelW=new Set(['FICT']); repView=true; renderSec()`)""")
+            await pg.wait_for_timeout(1200); await pg.evaluate("()=>__t(`repSelW=new Set(['FICT']); repView=true; renderSec(); repSendOpen()`)")
+            if not await pg.locator("#obody .rf").count(): return "", await pg.inner_text("#obody"), 0          # el panel no tiene informe que ofrecer
+            await pg.fill(".rpml input >> nth=0", "destinatario@prueba.example"); await pg.locator(".rpma .out").first.click()
+            await pg.wait_for_function("document.querySelector('.rpmv canvas')||document.querySelector('.rpms.err')"); return await pg.inner_text(".rpms"), await pg.inner_text("#obody .rf"), await pg.locator(".rpmv canvas").count()
+        fija(modelo_oct(False)); est, t, lienzos = await octubre("2026-11-08T09:00:00Z")
+        assert lienzos > 0 and "1 orden de trabajo finalizada en octubre de 2026" in t and "AMJ-995 · FICT-P3" in t and "1 / 42" in t and "20/10\tAMJ-995\t1" in t and "ancelad" not in t, (est, t[:1200])
+        print("OK · histórico: orden cerrada el 20/10 y cancelada el 08/11 → el informe de octubre se genera ENTERO (detalle, foto, aviso de cupo 1 / 42) y el servidor lo sella · " + est[:60])
+        fija(modelo_oct(True)); est, t, lienzos = await octubre("2026-10-25T09:00:00Z")
+        assert lienzos == 0 and "AMJ-995" not in t and "FICT-P3" not in t, (est, t[:1200])
+        print("OK · la misma orden cancelada ANTES del corte (25/10): el panel no la ofrece en el informe de octubre (el servidor tampoco la daría por cerrada: caso comprobado en Deno y en PostgreSQL)")
+        fija(None); await b.close()
 asyncio.run(main()); srv.shutdown()

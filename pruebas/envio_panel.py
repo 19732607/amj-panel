@@ -9,6 +9,8 @@ PDF = (RAIZ / "pruebas" / "ficticio.pdf").read_bytes(); SHA = hashlib.sha256(PDF
 tmp = pathlib.Path(tempfile.mkdtemp()); shutil.copytree(RAIZ / "beta", tmp / "beta")
 js = (tmp / "beta" / "panel.js").read_text(encoding="utf-8"); i = js.rindex("session=ENT?loadSession()")
 (tmp / "beta" / "panel.js").write_text(js[:i] + "window.__t=c=>eval(c);\n" + js[i:], encoding="utf-8")   # gancho solo para la prueba
+# Una copia local del panel solo funciona en modo ensayo. Estas pruebas usan la configuración de servicios simulados (solo válida en un navegador de pruebas automáticas).
+(tmp / "ensayo").mkdir(); (tmp / "ensayo" / "config.js").write_text("window.AMJ_ENTORNO=" + json.dumps({"proyecto": "gktignfhalpwhewhkzya", "url": "http://127.0.0.1:54399", "clave": "clave-publica-ficticia-0001", "dobles_locales": True}) + ";", encoding="utf-8")
 class H(http.server.SimpleHTTPRequestHandler):
     def log_message(self, *a): pass
 srv = http.server.ThreadingHTTPServer(("127.0.0.1", 8791), functools.partial(H, directory=str(tmp))); threading.Thread(target=srv.serve_forever, daemon=True).start()
@@ -24,10 +26,14 @@ ok = lambda c, m: (print("OK ·", m) if c else (_ for _ in ()).throw(AssertionEr
 async def main():
     async with async_playwright() as p:
         b = await p.chromium.launch(); pg = await b.new_page(viewport={"width": 1300, "height": 950}); errores = []; pg.on("pageerror", lambda e: errores.append(str(e)))
-        llamadas, modo, pend, retoma = [], {"enviar": "ok", "ficticios": False}, [], []
+        llamadas, modo, pend, retoma, consultas = [], {"enviar": "ok", "ficticios": False}, [], [], []
         async def funcion(route):
             cuerpo = json.loads(route.request.post_data)
             # envíos sin confirmar guardados en el servidor (segunda revisión, punto 4)
+            if cuerpo["accion"] == "estado":      # lectura sin efectos del estado efectivo de la función (cuarta revisión)
+                consultas.append(1); m = modo.get("estado")
+                if m == "cae": return await route.fulfill(status=500, json={"error": "caída"})
+                return await route.fulfill(json={"ok": True, **(m or {})})
             if cuerpo["accion"] == "registro": return await route.fulfill(json={"ok": True, "envios": [{"clave": "k1", "cliente": "FICT", "tipo": "diario", "desde": "2026-11-19", "hasta": "2026-11-19", "destinatarios": ["destinatario@prueba.example"], "estado": "incierto",
                 "detalle": None, "ciclo": 1, "sha256": SHA, "creado_at": "2026-11-19T17:00:00Z", "guardado_at": "2026-11-19T17:00:01Z", "archivo_borrado_at": "2026-11-20T16:30:00Z", "sin_confirmar_caducado": True}]})
             if cuerpo["accion"] == "pendientes": return await route.fulfill(json={"ok": True, "envio_real": True, "envios": pend})
@@ -40,6 +46,7 @@ async def main():
                 return await route.fulfill(json={"ok": True, "enviado": False, "paginas": 1, "bytes": len(PDF), "archivo": "Informe_ficticio.pdf", "sha256": SHA, "caduca": 9e15, "sello": "SELLO.FICTICIO", "cliente": {"codigo": "FICTICIO", "nombre": "Cliente Ficticio"}, "ordenes_por_prefijo": [902], "destinatarios": {"autorizados": ["destinatario@prueba.example"], "solo_ficticios": modo["ficticios"]},
                     "fotos": {"solicitadas": 2, "incluidas": 1, "faltan": 1, "detalle": [{"titulo": "AMJ-902 · Trabajo ficticio 2 · P2", "n": 1}]}, "pdf_b64": base64.b64encode(PDF).decode()})
             m = modo["enviar"]
+            if m == "apagado": return await route.fulfill(status=423, json={"error": "El envío real está deshabilitado en esta candidata. El PDF y los datos del envío son correctos.", "codigo": "ENVIO_DESHABILITADO", "sha256": SHA})
             if m == "incierto": return await route.fulfill(status=504, json={"error": "sin respuesta", "codigo": "RESULTADO_INCIERTO"})
             if m == "distinto": return await route.fulfill(status=409, json={"error": "El PDF que se intenta enviar no es el que se revisó. Pulsa otra vez «Ver el PDF que se enviará», revísalo y vuelve a enviar.", "codigo": "PDF_DISTINTO"})
             return await route.fulfill(json={"ok": True, "enviado": True, "para": cuerpo["para"], "proveedor": "correo-1", "archivo": "Informe_ficticio.pdf", "bytes": len(PDF), "sha256": SHA, "clave": "k"})
@@ -55,7 +62,7 @@ async def main():
             await route.fulfill(json=[{"id": 1, "mat_informe": {"total": 0, "fuente": "sin_materiales"}}, {"id": 2, "mat_informe": {"total": 9.5, "fuente": "autorizado"} if ctx["modo"] == "cambia" else {"total": 0, "fuente": "sin_materiales"}}])
         await pg.route("**/rest/v1/rpc/amj_admin_informe_ordenes", contexto)
         await pg.route("**/rest/v1/amj_service_media*", datos); await pg.route("**/rest/v1/amj_order_materials*", datos)
-        await pg.goto("http://127.0.0.1:8791/beta/index.html"); await pg.evaluate(PREPARA)
+        await pg.goto("http://127.0.0.1:8791/beta/index.html?entorno=ensayo"); await pg.wait_for_selector("#ensayo-banda.ok"); await pg.evaluate(PREPARA)
         estado = lambda: pg.inner_text(".rpms"); enviar = pg.locator(".rpma .go"); ver = pg.locator(".rpma .out").first
         await pg.fill(".rpml input >> nth=0", "destinatario@prueba.example")
         await enviar.click(); ok("Primero pulsa" in await estado() and not llamadas, "no deja enviar sin haber generado y revisado el PDF")
@@ -116,5 +123,23 @@ async def main():
         await pg.click(".rpmh button"); await pg.wait_for_function("!document.querySelector('.reppend')"); ok(True, "revisión 2 · confirmado el envío, el aviso desaparece")
         await pg.evaluate("()=>__t('repSendOpen()')")
         await pg.evaluate("()=>__t('logout()')"); ok(await pg.locator("#rpm").count() == 0 and await pg.evaluate("()=>__t('repLibera.length+Object.keys(MED).length+Object.keys(MAT).length')") == 0, "al cerrar sesión se cierra la ventana y se liberan archivos, fotos y materiales")
-        ok(not errores, "sin errores de JavaScript"); await b.close()
+        ok(not errores, "sin errores de JavaScript")
+        # ---- Cuarta revisión, punto 2 · en el ensayo (fase A) el botón «Enviar» depende de lo que diga la función desplegada sobre sus interruptores.
+        (tmp / "ensayo" / "config.js").write_text("window.AMJ_ENTORNO=" + json.dumps({"proyecto": "gktignfhalpwhewhkzya", "url": "http://127.0.0.1:54399", "clave": "clave-publica-ficticia-0001", "dobles_locales": True, "fase": "A"}) + ";", encoding="utf-8")
+        modo.update(estado={"envio_real": False, "solo_ficticios": True}, enviar="apagado", ficticios=True); fuente["modo"] = ctx["modo"] = "igual"; await pg.reload(); await pg.wait_for_selector("#ensayo-banda.ok"); await pg.evaluate(PREPARA)
+        ok("fase A: envío apagado" in await pg.inner_text("#ensayo-banda"), "revisión 4 · la banda del ensayo dice la fase")
+        async def puerta(est):
+            modo["estado"] = est; await pg.evaluate("()=>__t('repSendOpen()')"); await pg.wait_for_selector(".rpmg.ok, .rpmg.alto"); return await pg.inner_text(".rpmg"), await pg.is_disabled(".rpma .go")
+        t, off = await puerta({"envio_real": False, "solo_ficticios": True}); n0 = len(llamadas)
+        ok("envío real: apagado" in t and "solo destinatarios ficticios: sí" in t and not off and len(consultas) >= 1, "revisión 4 · fase A con envío apagado y solo ficticios: se lee de la función antes de poder enviar y el botón queda disponible")
+        await pg.fill(".rpml input >> nth=0", "destinatario@prueba.example"); await ver.click(); await pg.wait_for_selector(".rpmv canvas"); await enviar.click(); await enviar.click(); await pg.wait_for_function("document.querySelector('.rpms').textContent.includes('deshabilitado')")
+        ok([c["accion"] for c in llamadas[n0:]] == ["pdf", "enviar"], "revisión 4 · al pulsar «Enviar» se vuelve a leer el estado y la función responde 423: el envío está apagado")
+        for est, pista, caso in (({"envio_real": True, "solo_ficticios": True}, "FASE A DETENIDA", "envío real ENCENDIDO"), ({"envio_real": False, "solo_ficticios": False}, "FASE A DETENIDA", "destinatarios reales admitidos"),
+                                 ("cae", "No se ha podido comprobar", "la función no responde"), ({"envio_real": "no", "solo_ficticios": True}, "No se ha podido comprobar", "valor inesperado"), ({}, "No se ha podido comprobar", "respuesta sin los valores")):
+            n0 = len(llamadas); t, off = await puerta(est); await pg.evaluate("()=>document.querySelector('.rpma .go').click()")
+            ok(pista in t and off and len(llamadas) == n0, "revisión 4 · " + caso + ": «Enviar» queda bloqueado y no sale ninguna petición de envío")
+        t, off = await puerta({"envio_real": False, "solo_ficticios": True}); await pg.fill(".rpml input >> nth=0", "destinatario@prueba.example"); await ver.click(); await pg.wait_for_selector(".rpmv canvas"); n0 = len(llamadas)
+        await enviar.click(); modo["estado"] = {"envio_real": True, "solo_ficticios": True}; await enviar.click(); await pg.wait_for_function("document.querySelector('.rpms').textContent.includes('Envío detenido')")
+        ok(len(llamadas) == n0 and await pg.is_disabled(".rpma .go"), "revisión 4 · si el envío se enciende entre abrir la ventana y confirmar, la segunda lectura lo detecta y no se envía")
+        ok(not errores, "sin errores de JavaScript (fase A)"); await b.close()
 asyncio.run(main()); srv.shutdown()
