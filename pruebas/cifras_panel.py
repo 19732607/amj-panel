@@ -13,7 +13,7 @@ FILAS = [O(1, "HELP-P1", "completed", "2026-10-20T08:00:00Z", "2026-10-20T09:00:
          O(7, "HELP-P5", "completed", "2026-10-31T21:00:00Z", "2026-10-31T22:30:00Z", "2026-10-31T23:30:00Z", "Trabajo hecho.")]                    # 31/10 23:30 UTC = 01/11 00:30 en Madrid: es de noviembre
 PREPARA = "()=>{ __t(`session={access_token:'x',expires_at:Date.now()+9e12}; O=normalize(" + json.dumps(FILAS) + """); computeTags(); RV=[]; O.forEach(o=>{ MED[o.id]=[]; MAT[o.id]=[] }); MAT[1]=[{description:'Material ficticio',quantity:1,unit_price:50,subtotal:50,iva:10.5,total:60.5}]; MAT[2]=[{description:'Otro',quantity:1,unit_price:10,subtotal:10,iva:2.1,total:12.1}]; MAT[3]=[{description:'Otro',quantity:1,unit_price:15.5,subtotal:15.5,iva:3.26,total:18.76}];
   document.querySelectorAll('[hidden]').forEach(e=>e.hidden=false); document.getElementById('nw').hidden=true; document.getElementById('login').style.display='none'; lastOk=1;
-  sec='informes'; repPer='mes'; repDay='2026-10-15'; repCl=''; renderSec();`) }"""
+  PERS=[{cliente:'HELPHOUSING',desde:'2026-10-19',hasta:'2026-10-31',cupo:42},{cliente:'HELPHOUSING',desde:'2026-11-01',hasta:'2026-11-30',cupo:100}]; sec='informes'; repPer='mes'; repDay='2026-10-15'; repCl=''; renderSec();`) }"""
 ok = lambda c, m: (print("OK ·", m) if c else (_ for _ in ()).throw(AssertionError(m)))
 async def main():
     async with async_playwright() as p:
@@ -22,12 +22,12 @@ async def main():
         async def contexto(route):
             if not hist["hay"]: return await route.fulfill(status=404, json={"code": "PGRST202"})
             S = {"total": 0, "fuente": "sin_materiales"}
-            await route.fulfill(json=[{"id": 1, "mat_informe": {"total": 50, "base": 45.45, "iva": 4.55, "fuente": "ticket"}},          # ticket con IVA del 10 %
-                {"id": 2, "sin_ejecucion": True, "mat_informe": {"total": 12.1, "fuente": "autorizado"}},                                                   # autorizado por AMJ, sin ticket: solo total
-                {"id": 3, "sin_ejecucion": False, "mat_informe": {"total": 15.5, "base": 12.81, "iva": 2.69, "fuente": "ticket"}},                           # ticket aprobado + autorización de 18,76: manda el ticket (caso AMJ-289)
-                {"id": 4, "ref": 904, "eventos": [{"a": "cancel", "t": "2026-11-05T10:00:00Z"}], "mat_informe": S}, {"id": 5, "eventos": [], "mat_informe": S}, {"id": 6, "eventos": [], "mat_informe": S},
+            await route.fulfill(json=[{"id": 1, "inmueble": "P1", "mat_informe": {"total": 50, "base": 45.45, "iva": 4.55, "fuente": "ticket"}},          # ticket con IVA del 10 %
+                {"id": 2, "inmueble": "P1", "sin_ejecucion": True, "mat_informe": {"total": 12.1, "fuente": "autorizado"}},                                                   # autorizado por AMJ, sin ticket: solo total
+                {"id": 3, "inmueble": "P2", "sin_ejecucion": False, "mat_informe": {"total": 15.5, "base": 12.81, "iva": 2.69, "fuente": "ticket"}},                           # ticket aprobado + autorización de 18,76: manda el ticket (caso AMJ-289)
+                {"id": 4, "ref": 904, "inmueble": "P3", "eventos": [{"a": "cancel", "t": "2026-11-05T10:00:00Z"}], "mat_informe": S}, {"id": 5, "inmueble": "P4", "eventos": [], "mat_informe": S}, {"id": 6, "eventos": [], "mat_informe": S},
                 {"id": 7, "eventos": [{"a": "finish", "t": "2026-10-31T23:30:00Z"}], "mat_informe": S},
-                {"id": 8, "eventos": [{"a": "finish", "t": "2026-10-15T10:00:00Z"}, {"a": "admin_voided_finish", "t": "2026-11-03T09:00:00Z"}, {"a": "admin_reopen", "t": "2026-11-03T09:00:00Z"}, {"a": "finish", "t": "2026-11-04T10:00:00Z"}], "mat_informe": S}])
+                {"id": 8, "inmueble": "P6", "eventos": [{"a": "finish", "t": "2026-10-15T10:00:00Z"}, {"a": "admin_voided_finish", "t": "2026-11-03T09:00:00Z"}, {"a": "admin_reopen", "t": "2026-11-03T09:00:00Z"}, {"a": "finish", "t": "2026-11-04T10:00:00Z"}], "mat_informe": S}])
         await pg.route("**/rest/v1/rpc/amj_admin_informe_ordenes", contexto)
         await pg.goto("http://127.0.0.1:8791/beta/index.html"); await pg.evaluate(PREPARA); await pg.wait_for_function("()=>__t('CTX')===null")
         lista = await pg.inner_text(".reptb"); ok("HELPHOUSING3" in lista and "ENSO0" in lista, "un cliente sin cierres en el periodo también se puede consultar (ENSO, 0 órdenes)")
@@ -37,15 +37,16 @@ async def main():
         t = await ver("HELP")
         ok(val(t, "órdenes finalizadas") == "3" and "AMJ-907 · P5\tTrabajo ficticio 7\tTerminada después, el 01/11" in t, "corte en Europe/Madrid: la orden cerrada el 01/11 a las 00:30 (hora de Madrid) no es una finalizada de octubre; figura como abierta al cierre")
         ok(val(t, "cerradas en menos de 24 h desde el alta") == "67 %", "«menos de 24 h» excluye el límite exacto (24 h justas no cuenta)")
-        ok(val(t, "órdenes sin posibilidad de ejecución") == "2" and val(t, "visitas en las que no se pudo hacer ningún trabajo") == "1", "sin ejecución: 2 órdenes (también con otra redacción) pero solo 1 visita sin ningún trabajo")
-        ok(val(t, "avisos consumidos") == "3 / 42" and "P1 el 20/10 (AMJ-901 y AMJ-902)" in t and "4 órdenes atendidas en 3 visitas" in t, "cupo por visitas y día real de inicio: 4 órdenes empezadas en el periodo, 3 avisos de 42 (la empezada el 31/10 cuenta en octubre)")
+        ok(val(t, "órdenes sin posibilidad de ejecución") == "2", "sin ejecución (sin contexto del servidor): 2 órdenes por el texto del informe, también con otra redacción")
         ok("no muestra materiales y no se puede enviar" in await pg.inner_text(".repmat") and "60,50" not in t and "18,76" not in t and "Informe de materiales" not in t, "revisión · contexto incompleto: el informe no muestra ningún importe de materiales (nunca lo declarado) y avisa de que no se puede enviar")
         await pg.evaluate("()=>__t('repSendOpen()')"); ok(await pg.locator("#rpm").count() == 0 and "No se puede enviar" in await pg.inner_text("#obody"), "revisión · sin contexto del servidor no se abre el envío")
         ok(val(t, "abiertas al cierre del mes (según el estado de hoy)") == "3" and "AMJ-908 · P6\tTrabajo ficticio 8\tTerminada después, el 04/11" in t and "no se dispone del histórico de estados" in t, "sin histórico en el servidor, se dice que las abiertas son según el estado de hoy")
-        ok("desde el alta de la orden" in t and "del aviso al" not in t and "avisos creados fuera de horario" not in t and "Por estado a fecha de hoy" in t and "registrado por el técnico" in t, "los tiempos se etiquetan «desde el alta» y el de trabajo como registrado por el técnico")
+        ok("desde el alta de la orden" in t and "del aviso al" not in t and "avisos creados fuera de horario" not in t and "Por estado en la fecha de corte" in t, "los tiempos se etiquetan «desde el alta» y el de trabajo como registrado por el técnico")
         ok(t.count("Sin posibilidad de ejecución") == 2 and "★" not in t and "Nombre Apellido" not in t and "Apellido" not in t, "detalle: estado de las dos órdenes sin ejecución; sin valoraciones ni apellidos de técnicos")
         hist["hay"] = True; await pg.evaluate("()=>{ __t('CTX=undefined; repCtx()') }"); await pg.wait_for_function("()=>{ const c=__t('CTX'); return c&&c[4] }"); t = await ver("HELP")
-        ok("AMJ-908" not in t, "revisión 4 · reapertura: la orden cerrada el 15/10 y reabierta el 03/11 estaba cerrada en el corte del 31/10 y no figura como abierta")
+        ok(val(t, "avisos consumidos") == "2 / 42" and "P1 el 20/10 (AMJ-901 y AMJ-902)" in t and "Pendientes de clasificar (sin inmueble identificado, no consumen aviso): AMJ-907." in t, "revisión 2 · cupo por inmueble de la ficha y día real de inicio: 2 avisos de 42; la orden sin inmueble queda pendiente de clasificar y no consume aviso")
+        ok("registrado por el técnico" not in t and "fuera de horario" not in t and "más de 2 h" not in t, "revisión 2 · retirados los indicadores sin fuente fiable en el servidor (cronómetro y «fuera de horario»)")
+        ok(val(t, "órdenes finalizadas") == "4" and "15/10\tAMJ-908 · P6" in t and "Terminada después, el 04/11" not in t, "revisión 2 · reapertura posterior al corte: el informe de octubre sigue mostrando la orden como cerrada el 15/10 (su cierre vigente en esa fecha), no como abierta")
         ok(val(t, "órdenes sin posibilidad de ejecución") == "1" and val(t, "visitas en las que no se pudo hacer ningún trabajo") == "0", "revisión 4 · «sin ejecución» sale del dato del servidor (v_kpi_ordenes), no del texto del informe")
         ok(val(t, "abiertas al cierre del mes") == "3" and "según el estado de hoy" not in t, "con el histórico del servidor, la orden cancelada después del cierre cuenta como abierta en esa fecha"); ok("AMJ-904 · P3\tTrabajo ficticio 4\tAbierta en esa fecha" in t and "ancelad" not in t, "esa orden aparece en la lista de abiertas sin mencionar la cancelación (regla: las canceladas no se muestran al cliente)")
         aviso = await pg.inner_text(".repmat"); doc = await pg.inner_text("#obody .rf")
