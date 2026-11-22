@@ -1,0 +1,1 @@
+pdfjs-dist 6.5.438 (compilación «legacy»), descargado de npm el 21/11/2026. Fuentes Liberation Sans para Helvetica.
