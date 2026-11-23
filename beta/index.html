@@ -143,9 +143,10 @@ tr.flash td{animation:fl 2.5s}@keyframes fl{0%{background:#fff3b8}100%{backgroun
 .dsh{margin:20px 0 4px;font-size:13.5px;font-weight:700;color:var(--navy)}
 .dsb .muted{font-size:12.5px;padding:6px 0}
 .dsn{font-size:11.5px;color:var(--muted);margin-top:6px}
-.dtb{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:4px}
-.dtb th{text-align:left;color:var(--muted);font-weight:600;padding:6px 8px 6px 0;border-bottom:1px solid var(--line)}
+.dtb{width:100%;min-width:0;border-collapse:collapse;font-size:12.5px;margin-top:4px}
+.dtb th{position:static;background:none;color:var(--muted);text-align:left;font-weight:600;font-size:12px;padding:6px 8px 6px 0;border-bottom:1px solid var(--line)}
 .dtb td{padding:7px 8px 7px 0;border-bottom:1px solid var(--line);vertical-align:top}
+.dtb th:nth-child(n),.dtb td:nth-child(n){display:table-cell}
 .dtb th:nth-child(n+2),.dtb td:nth-child(n+2){text-align:right;white-space:nowrap;padding-right:0;padding-left:8px}
 .dtb tr.tot td{font-weight:700}
 .dsb .row.tot span{font-weight:700;color:var(--txt)}
@@ -215,7 +216,7 @@ tr.flash td{animation:fl 2.5s}@keyframes fl{0%{background:#fff3b8}100%{backgroun
 const acceso = document.getElementById('lerr');
 if (panelPublicado) {
   const programa = document.createElement('script');
-  programa.src = 'panel.js?v=ficha1';
+  programa.src = 'panel.js?v=ficha2';
   programa.onload = () => {
     for (const id of ['le', 'lp', 'lb']) document.getElementById(id).disabled = false;
   };
