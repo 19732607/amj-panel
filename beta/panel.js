@@ -490,7 +490,10 @@ async function load(){
     if(sec==='clientes'||CP===null){ try{ CP=await rpc('amj_client_properties',{}) }catch(e){ if(e.message==='ACCESS_DENIED') throw e } }
     if(sec==='pagos'||P===null){ try{ P=await rpc('amj_admin_payouts',{}) }catch(e){ if(e.message==='ACCESS_DENIED') throw e } }
     if(sec==='materiales'||RH===null){ try{ RH=await rpc('amj_admin_receipts_history',{p_days:60}) }catch(e){ if(e.message==='ACCESS_DENIED') throw e } }
-    lastOk=Date.now(); if(WARN) showErr(WARN); else $('err').hidden=true; render(changed); fillFilters(); renderSec();
+    lastOk=Date.now(); if(WARN) showErr(WARN); else $('err').hidden=true; render(changed); fillFilters();
+    /* Con el formulario de transferencia abierto no se repinta la sección: el refresco de 15 s
+       no debe borrar ni desenfocar lo que Antonio está escribiendo. */
+    if(!payForm) renderSec();
   }catch(e){
     if(e.message==='ACCESS_DENIED'){ showErr('Esta cuenta no es de administración. Entra con la cuenta de administrador de AMJ.'); logout(); }
     else if(e.status===400||e.message==='NO_SESSION'){ logout(); }
@@ -557,6 +560,94 @@ function closeDr(){ $('dr').classList.remove('open'); $('sh').classList.remove('
    Solo lectura. Usa las mismas lecturas que Informes (fotos verificadas y materiales de la orden), Materiales y tickets (histórico de tickets),
    el contexto de informes (justificantes e importe del informe al cliente) y Pagos a técnicos. Todo a la vista al abrir la ficha, sin desplegables.
    Las fotos y los materiales de la ficha van en su propia memoria (DRM/DRT) para no alterar la comprobación de cambios de los informes (MED/MAT). */
+/* ---------- Anotar una transferencia ya hecha (Pagos a técnicos) ----------
+   Autorizado por Antonio el 26/11/2026: es la única escritura del panel.
+   No mueve dinero: llama a public.amj_record_technician_bank_transfer, que SOLO anota
+   en el servidor una transferencia que Antonio ya ha hecho en el banco. El servidor
+   comprueba que es administrador, el tope de la orden, la fecha y la referencia, y
+   rechaza las órdenes con factura externa, con factura retenida o con materiales sin revisar.
+   Cada componente (mano de obra y materiales) es un pago distinto con su propio identificador,
+   generado al abrir el formulario: si se pulsa dos veces, el servidor lo reconoce y no duplica. */
+let payForm=null, payMsg=null, payBusy=false;
+const nuevoId=()=>(crypto.randomUUID?crypto.randomUUID():'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g,c=>{const r=crypto.getRandomValues(new Uint8Array(1))[0]%16,v=c==='x'?r:(r&0x3|0x8);return v.toString(16)}));
+const PAY_ERR={
+  ACCESS_DENIED:'Esta cuenta no es de administración de AMJ.',
+  ORDER_EXTERNALLY_INVOICED:'El técnico facturó esta orden fuera de la app: no se paga por aquí.',
+  INVOICE_ON_HOLD:'La factura del técnico está retenida. Resuélvela antes de anotar el pago.',
+  ORDER_ALREADY_SETTLED_BY_INVOICE:'Esta orden ya quedó liquidada por una factura pagada.',
+  MATERIALS_PENDING_REVIEW:'Los materiales siguen pendientes de tu revisión en la app.',
+  PAYMENT_EXCEEDS_RECORDED_AMOUNT:'El importe supera lo que queda por pagar en esta orden.',
+  PAYMENT_RECORD_CONFLICT:'Ese pago ya está anotado con otros datos distintos.',
+  INVALID_PAYMENT_RECORD:'Revisa el importe, la fecha y la referencia del banco.',
+  INVALID_PAYMENT_ORDER:'La orden no está terminada, o la fecha es anterior al fin del trabajo.',
+  INVALID_PAYMENT_CONCEPT:'Escribe el concepto de la transferencia.'};
+const payErrTxt=t=>{ for(const k in PAY_ERR) if(t.indexOf(k)>=0) return PAY_ERR[k]; return 'El servidor no ha aceptado el pago. Nada se ha anotado.' };
+const hoyISO=()=>new Date(Date.now()-new Date().getTimezoneOffset()*60000).toISOString().slice(0,10);
+function payAbrir(r){ const ordenId=(O.find(o=>Number(o.ref)===Number(r.reference))||{}).id;
+  const pl=Math.max((r.lt||0)-r.lp,0), pm=Math.max((r.mt||0)-r.mp,0);
+  payForm={ ref:r.reference, orderId:ordenId, tecnico:r.technician||'', pl:Math.round(pl*100)/100, pm:Math.round(pm*100)/100,
+    hacerL:pl>0.004, hacerM:pm>0.004, impL:pl>0.004?pl.toFixed(2):'', impM:pm>0.004?pm.toFixed(2):'',
+    fecha:hoyISO(), banco:'', concepto:'Pago AMJ-'+r.reference+(r.technician?' · '+r.technician:''),
+    idL:nuevoId(), idM:nuevoId(), confirmando:false, error:'' };
+  payMsg=null; renderSec() }
+function payCerrar(){ payForm=null; renderSec() }
+function payCampo(etiqueta,nodo,nota){ const w=el('div'); w.style.cssText='margin-bottom:10px';
+  const l=el('label',null,etiqueta); l.style.cssText='display:block;font-size:12.5px;color:var(--muted);margin-bottom:4px'; w.append(l,nodo);
+  if(nota){ const n=el('div',null,nota); n.style.cssText='font-size:11.5px;color:var(--muted);margin-top:3px'; w.append(n) } return w }
+function payEntrada(valor,onin,tipo,extra){ const i=el('input'); i.type=tipo||'text'; i.value=valor==null?'':valor;
+  i.style.cssText='width:100%;max-width:320px;border:1px solid var(--line);border-radius:9px;padding:9px 10px;font:inherit';
+  if(extra) Object.assign(i,extra); i.oninput=()=>onin(i.value); return i }
+function payLinea(f,comp){ const hay=comp==='labor'?f.pl:f.pm; if(hay<=0.004) return null;
+  const w=el('div'); w.style.cssText='display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap';
+  const c=el('input'); c.type='checkbox'; c.checked=comp==='labor'?f.hacerL:f.hacerM;
+  c.onchange=()=>{ if(comp==='labor') f.hacerL=c.checked; else f.hacerM=c.checked; renderSec() };
+  const t=el('span',null,(comp==='labor'?'Mano de obra':'Materiales')+' · pendiente '+eur(hay));
+  const i=payEntrada(comp==='labor'?f.impL:f.impM,v=>{ if(comp==='labor') f.impL=v; else f.impM=v },'text',{inputMode:'decimal',placeholder:'0,00'});
+  i.style.maxWidth='120px'; i.disabled=!c.checked;
+  w.append(c,t,i,el('span',null,'€')); return w }
+const payNum=v=>{ const n=Number(String(v).replace(/\s/g,'').replace(',','.')); return isFinite(n)?Math.round(n*100)/100:NaN };
+function payValida(f){ const partes=[];
+  if(f.hacerL){ const n=payNum(f.impL); if(!(n>0)||n>f.pl+0.004) return {error:'El importe de mano de obra debe ser mayor que cero y no pasar de '+eur(f.pl)+'.'}; partes.push({comp:'labor',id:f.idL,imp:n,txt:'Mano de obra'}) }
+  if(f.hacerM){ const n=payNum(f.impM); if(!(n>0)||n>f.pm+0.004) return {error:'El importe de materiales debe ser mayor que cero y no pasar de '+eur(f.pm)+'.'}; partes.push({comp:'materials',id:f.idM,imp:n,txt:'Materiales'}) }
+  if(!partes.length) return {error:'Marca al menos mano de obra o materiales.'};
+  if(!f.orderId) return {error:'No encuentro la orden AMJ-'+f.ref+' entre las cargadas. Recarga el panel.'};
+  if(!f.fecha||f.fecha>hoyISO()) return {error:'La fecha de la transferencia no puede ser futura.'};
+  if(!f.banco.trim()) return {error:'Escribe la referencia que te da el banco.'};
+  if(!f.concepto.trim()) return {error:'Escribe el concepto de la transferencia.'};
+  return {partes} }
+async function payEnviar(f){ const v=payValida(f); if(v.error){ f.error=v.error; f.confirmando=false; renderSec(); return }
+  payBusy=true; renderSec();
+  const hechos=[], repetidos=[];
+  try{
+    for(const parte of v.partes){
+      const paid=new Date(f.fecha+'T12:00:00').toISOString();
+      const res=await rpc('amj_record_technician_bank_transfer',{p_id:parte.id,p_order:f.orderId,p_component:parte.comp,
+        p_amount:parte.imp,p_paid_at:paid,p_bank_reference:f.banco.trim(),p_concept:f.concepto.trim()});
+      (res&&res.duplicate?repetidos:hechos).push(parte.txt+' '+eur(parte.imp));
+    }
+    payMsg={ok:true,txt:'AMJ-'+f.ref+': '+(hechos.length?'anotado '+hechos.join(' y '):'')+(repetidos.length?(hechos.length?'. ':'')+'ya estaba anotado '+repetidos.join(' y '):'')+'.'};
+    payForm=null; P=null; await load();
+  }catch(e){ const t=(e&&e.message)||''; f.error=payErrTxt(t)+(hechos.length?' Sí quedó anotado: '+hechos.join(' y ')+'.':''); f.confirmando=false; payBusy=false; renderSec(); return }
+  payBusy=false; renderSec() }
+function payPanel(){ const f=payForm; if(!f) return null;
+  const c=el('div','card');
+  c.append(el('h3',null,'Anotar transferencia · AMJ-'+f.ref+(f.tecnico?' · '+f.tecnico:'')));
+  c.append(src('Esto NO paga nada: anota en la app una transferencia que ya has hecho en el banco, para que la orden quede como pagada. El servidor comprueba el tope de la orden y no admite pagar dos veces la misma referencia.'));
+  const l=payLinea(f,'labor'), m=payLinea(f,'materials'); if(l) c.append(l); if(m) c.append(m);
+  c.append(payCampo('Fecha de la transferencia',payEntrada(f.fecha,v=>{f.fecha=v},'date',{max:hoyISO()})));
+  c.append(payCampo('Referencia del banco',payEntrada(f.banco,v=>{f.banco=v},'text',{placeholder:'La que figura en el movimiento',maxLength:500}),'Si repites una referencia ya anotada en esta orden, el servidor no la duplica.'));
+  c.append(payCampo('Concepto',payEntrada(f.concepto,v=>{f.concepto=v},'text',{maxLength:500})));
+  if(f.error){ const e=el('div',null,f.error); e.style.cssText='color:var(--no,#b4232a);font-size:13px;margin:6px 0 10px'; c.append(e) }
+  const bar=el('div'); bar.style.cssText='display:flex;gap:10px;flex-wrap:wrap;margin-top:6px';
+  const bot=(txt,fn,primario)=>{ const b=el('button',null,txt); b.disabled=payBusy;
+    b.style.cssText='border:1px solid var(--line);border-radius:9px;padding:10px 14px;font:inherit;cursor:pointer;'+(primario?'background:var(--az,#0b3b6f);color:#fff;border-color:transparent':'background:#fff');
+    b.onclick=fn; return b };
+  if(!f.confirmando){ bar.append(bot(payBusy?'Anotando…':'Anotar',()=>{ const v=payValida(f); if(v.error){ f.error=v.error } else { f.error=''; f.confirmando=true } renderSec() },true),bot('Cancelar',payCerrar)) }
+  else { const v=payValida(f);
+    const res=el('div',null,'Se va a anotar en AMJ-'+f.ref+': '+v.partes.map(x=>x.txt+' '+eur(x.imp)).join(' y ')+', con fecha '+f.fecha.split('-').reverse().join('/')+' y referencia «'+f.banco.trim()+'». ¿Confirmas?');
+    res.style.cssText='font-size:13.5px;font-weight:600;margin:4px 0 10px'; c.append(res);
+    bar.append(bot(payBusy?'Anotando…':'Sí, anotar',()=>payEnviar(f),true),bot('No',()=>{ f.confirmando=false; renderSec() })) }
+  c.append(bar); return c }
 const DRM={}, DRT={}; let drId=null;
 function drBloque(c,titulo){ c.append(el('h4','dsh',titulo)); const b=el('div','dsb'); c.append(b); return b }
 function drFila(b,k,v,cls){ const r=el('div','row'+(cls?' '+cls:'')), s=el('span'); if(v instanceof Node) s.append(v); else s.textContent=v; r.append(el('span',null,k),s); b.append(r) }
@@ -722,15 +813,20 @@ const SECS={
    const sel=el('select'); sel.style.cssText='border:1px solid var(--line);border-radius:9px;padding:8px 10px;font:inherit;margin-bottom:12px';
    sel.add(new Option('Todos los técnicos','')); Object.keys(byT).sort().forEach(k=>sel.add(new Option(k,k))); sel.value=payT; sel.onchange=()=>{payT=sel.value;renderSec()};
    const detail=rows.filter(r=>!payT||r.technician===payT);
+   const avisos=[]; if(payMsg) { const a=el('div','card'); const t=el('div',null,payMsg.txt); t.style.cssText='font-weight:600'; a.append(t); avisos.push(a) }
+   const formulario=payPanel(); if(formulario) avisos.push(formulario);
    return [kpis([[eur(tot.gen),'generado (IVA incluido)'],[eur(tot.paid),'pagado'],[eur(tot.pend),'pendiente de pagar'],[rows.filter(r=>r.pend>0.004).length,'órdenes con importe pendiente']]),
+     ...avisos,
      src('Órdenes terminadas (sin pruebas). Mano de obra = horas de la orden, ya con los ajustes de AMJ, por la tarifa del técnico con IVA. Materiales = el importe validado del ticket, IVA incluido, sin sumar otro 21 % (regla desde el 21/11/2026; las órdenes anteriores conservan su importe). Pagado = pagos registrados en el servidor (coinciden con las órdenes marcadas como PAGADO en Airtable). Pendiente = el que calcula el servidor: las órdenes facturadas por el técnico fuera de la app quedan a cero.'),
      card('Por técnico',['Técnico','Órdenes','Generado','Pagado','Pendiente','Factura externa','Materiales por revisar','Último pago'],
        Object.entries(byT).sort((a,b)=>b[1].pend-a[1].pend).map(([k,g])=>({cells:[k,g.n,eur(g.gen),eur(g.paid),eur(g.pend),g.ext||'—',g.mpend||'—',g.last?fmtD(g.last):'—'],onclick:()=>{payT=k;renderSec()}}))),
      sel,
-     card('Detalle por orden'+(payT?' · '+payT:''),['Fecha','Orden','Técnico','Horas','Mano de obra','Materiales','Total','Pagado','Estado'],
+     card('Detalle por orden'+(payT?' · '+payT:''),['Fecha','Orden','Técnico','Horas','Mano de obra','Materiales','Total','Pagado','Estado','Transferencia'],
        detail.map(r=>[fmtD(r.finished_at),'AMJ-'+r.reference+(r.adjusted?' · horas ajustadas':'')+(r.ext?' · factura externa':(r.invoiced?' · facturada':'')),r.technician||'—',r.billable_minutes!=null?dur(r.billable_minutes):'—',r.lt===null?'Sin tarifa':eur(r.lt),
          r.mt===null?(r.materials_needs_amj?'Por revisar':'—'):eur(r.mt),eur(r.gen),eur(r.paid),
-         (r.ext?badge('Factura externa','ok'):(r.gen<=0.004?badge('Sin importe','no'):badge(r.pend<=0.004?'Pagado':(r.paid>0?'Pago parcial':'Pendiente'),r.pend<=0.004?'ok':'s-pending')))]),'No hay órdenes.')] }],
+         (r.ext?badge('Factura externa','ok'):(r.gen<=0.004?badge('Sin importe','no'):badge(r.pend<=0.004?'Pagado':(r.paid>0?'Pago parcial':'Pendiente'),r.pend<=0.004?'ok':'s-pending'))),
+         (r.ext||r.pend<=0.004)?'—':(()=>{ const b=el('button',null,'Anotar'); b.style.cssText='border:1px solid var(--line);border-radius:8px;padding:6px 10px;font:inherit;font-size:12.5px;background:#fff;cursor:pointer';
+           b.onclick=ev=>{ ev.stopPropagation(); payAbrir(r) }; return b })()]),'No hay órdenes.')] }],
  materiales:['Materiales y tickets',()=>{ const rc=((M&&M.receipts)||[]).filter(r=>!TEST.has(r.order_id)), od=((M&&M.orders)||[]).filter(x=>!TEST.has(x.id));
    return [kpis([[rc.length,'tickets por revisar'],[od.length,'órdenes con materiales pendientes de AMJ']]),
      src('Datos en vivo del servidor: tickets que la IA no pudo validar y órdenes terminadas cuyos materiales esperan decisión de AMJ. La revisión se hace en la app.'),
