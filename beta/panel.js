@@ -596,15 +596,17 @@ function drExtra(o,c){ c.textContent='';
   else { const r=P.find(p=>Number(p.reference)===Number(o.ref));
     if(!r) bp.append(el('div','muted','El servidor no da importe para esta orden.'));
     else { const lt=r.labor_total==null?null:Number(r.labor_total), mt=r.materials_total==null?null:Number(r.materials_total), lp=Number(r.labor_paid||0), mp=Number(r.materials_paid||0);
-      const gen=(lt||0)+(mt||0), paid=lp+mp, pend=Math.max((lt||0)-lp,0)+Math.max((mt||0)-mp,0);
+      const gen=(lt||0)+(mt||0), paid=lp+mp;
+      const pend=r.pending_gross!=null?Number(r.pending_gross):Math.max((lt||0)-lp,0)+Math.max((mt||0)-mp,0);
       drFila(bp,'Horas a pagar',(r.billable_minutes!=null?dur(r.billable_minutes):'—')+(r.adjusted?' · ajustadas por AMJ':''));
       drFila(bp,'Mano de obra, IVA incluido',lt===null?'Sin tarifa':eur(lt));
       drFila(bp,'Materiales, IVA incluido',mt===null?(r.materials_needs_amj?'Por revisar':'—'):eur(mt));
       drFila(bp,'Total de la orden',eur(gen),'tot');
       drFila(bp,'Pagado',eur(paid)+(r.last_paid_at?' · '+fmtD(r.last_paid_at):''));
       drFila(bp,'Pendiente de pagar',eur(pend),'tot');
-      drFila(bp,'Estado',gen<=0.004?badge('Sin importe','no'):badge(pend<=0.004?'Pagado':(paid>0?'Pago parcial':'Pendiente'),pend<=0.004?'ok':'s-pending'));
-      if(r.invoiced) bp.append(el('div','dsn','Incluida en una factura del técnico.')) } }
+      drFila(bp,'Estado',r.external_invoice===true?badge('Factura externa','ok'):(gen<=0.004?badge('Sin importe','no'):badge(pend<=0.004?'Pagado':(paid>0?'Pago parcial':'Pendiente'),pend<=0.004?'ok':'s-pending')));
+      if(r.external_invoice===true) bp.append(el('div','dsn','El técnico la facturó fuera de la app: no genera pendiente en la app y no se vuelve a pagar por aquí.'));
+      else if(r.invoiced) bp.append(el('div','dsn','Incluida en una factura del técnico.')) } }
 }
 function drCarga(o,c){ drId=o.id; const pinta=()=>{ if(drId===o.id&&$('dr').classList.contains('open')) drExtra(o,c) }; pinta();
   const inl='('+o.id+')';
@@ -711,21 +713,24 @@ const SECS={
    if(!P) return [el('div','empty','Cargando pagos…')];
    const rows=P.filter(x=>!/prueba|NO ASIGNAR/i.test(x.technician||'')).map(x=>{ const lt=x.labor_total==null?null:Number(x.labor_total), mt=x.materials_total==null?null:Number(x.materials_total);
      const lp=Number(x.labor_paid||0), mp=Number(x.materials_paid||0);
-     return {...x, lt, mt, lp, mp, gen:(lt||0)+(mt||0), paid:lp+mp, pend:Math.max((lt||0)-lp,0)+Math.max((mt||0)-mp,0)} });
-   const byT={}; rows.forEach(r=>{ const k=r.technician||'(sin técnico)'; const g=byT[k]=byT[k]||{n:0,gen:0,paid:0,pend:0,mpend:0,last:null}; g.n++; g.gen+=r.gen; g.paid+=r.paid; g.pend+=r.pend; if(r.mt===null&&r.materials_needs_amj) g.mpend++; if(r.last_paid_at&&(!g.last||r.last_paid_at>g.last)) g.last=r.last_paid_at });
+     /* El pendiente lo decide el servidor (pending_gross): es cero en las órdenes con factura externa
+        y respeta las reglas de materiales del bloque 1. Solo si el servidor no lo diera se calcula aquí. */
+     const pend=x.pending_gross!=null?Number(x.pending_gross):Math.max((lt||0)-lp,0)+Math.max((mt||0)-mp,0);
+     return {...x, lt, mt, lp, mp, ext:x.external_invoice===true, gen:(lt||0)+(mt||0), paid:lp+mp, pend} });
+   const byT={}; rows.forEach(r=>{ const k=r.technician||'(sin técnico)'; const g=byT[k]=byT[k]||{n:0,gen:0,paid:0,pend:0,mpend:0,ext:0,last:null}; g.n++; g.gen+=r.gen; g.paid+=r.paid; g.pend+=r.pend; if(r.ext) g.ext++; if(r.mt===null&&r.materials_needs_amj) g.mpend++; if(r.last_paid_at&&(!g.last||r.last_paid_at>g.last)) g.last=r.last_paid_at });
    const tot=rows.reduce((a,r)=>({gen:a.gen+r.gen,paid:a.paid+r.paid,pend:a.pend+r.pend}),{gen:0,paid:0,pend:0});
    const sel=el('select'); sel.style.cssText='border:1px solid var(--line);border-radius:9px;padding:8px 10px;font:inherit;margin-bottom:12px';
    sel.add(new Option('Todos los técnicos','')); Object.keys(byT).sort().forEach(k=>sel.add(new Option(k,k))); sel.value=payT; sel.onchange=()=>{payT=sel.value;renderSec()};
    const detail=rows.filter(r=>!payT||r.technician===payT);
    return [kpis([[eur(tot.gen),'generado (IVA incluido)'],[eur(tot.paid),'pagado'],[eur(tot.pend),'pendiente de pagar'],[rows.filter(r=>r.pend>0.004).length,'órdenes con importe pendiente']]),
-     src('Órdenes terminadas (sin pruebas). Mano de obra = horas de la orden, ya con los ajustes de AMJ, por la tarifa del técnico con IVA. Materiales = importe aceptado + 21 %. Pagado = pagos registrados en el servidor (coinciden con las órdenes marcadas como PAGADO en Airtable).'),
-     card('Por técnico',['Técnico','Órdenes','Generado','Pagado','Pendiente','Materiales por revisar','Último pago'],
-       Object.entries(byT).sort((a,b)=>b[1].pend-a[1].pend).map(([k,g])=>({cells:[k,g.n,eur(g.gen),eur(g.paid),eur(g.pend),g.mpend||'—',g.last?fmtD(g.last):'—'],onclick:()=>{payT=k;renderSec()}}))),
+     src('Órdenes terminadas (sin pruebas). Mano de obra = horas de la orden, ya con los ajustes de AMJ, por la tarifa del técnico con IVA. Materiales = el importe validado del ticket, IVA incluido, sin sumar otro 21 % (regla desde el 21/11/2026; las órdenes anteriores conservan su importe). Pagado = pagos registrados en el servidor (coinciden con las órdenes marcadas como PAGADO en Airtable). Pendiente = el que calcula el servidor: las órdenes facturadas por el técnico fuera de la app quedan a cero.'),
+     card('Por técnico',['Técnico','Órdenes','Generado','Pagado','Pendiente','Factura externa','Materiales por revisar','Último pago'],
+       Object.entries(byT).sort((a,b)=>b[1].pend-a[1].pend).map(([k,g])=>({cells:[k,g.n,eur(g.gen),eur(g.paid),eur(g.pend),g.ext||'—',g.mpend||'—',g.last?fmtD(g.last):'—'],onclick:()=>{payT=k;renderSec()}}))),
      sel,
      card('Detalle por orden'+(payT?' · '+payT:''),['Fecha','Orden','Técnico','Horas','Mano de obra','Materiales','Total','Pagado','Estado'],
-       detail.map(r=>[fmtD(r.finished_at),'AMJ-'+r.reference+(r.adjusted?' · horas ajustadas':'')+(r.invoiced?' · facturada':''),r.technician||'—',r.billable_minutes!=null?dur(r.billable_minutes):'—',r.lt===null?'Sin tarifa':eur(r.lt),
+       detail.map(r=>[fmtD(r.finished_at),'AMJ-'+r.reference+(r.adjusted?' · horas ajustadas':'')+(r.ext?' · factura externa':(r.invoiced?' · facturada':'')),r.technician||'—',r.billable_minutes!=null?dur(r.billable_minutes):'—',r.lt===null?'Sin tarifa':eur(r.lt),
          r.mt===null?(r.materials_needs_amj?'Por revisar':'—'):eur(r.mt),eur(r.gen),eur(r.paid),
-         (r.gen<=0.004?badge('Sin importe','no'):badge(r.pend<=0.004?'Pagado':(r.paid>0?'Pago parcial':'Pendiente'),r.pend<=0.004?'ok':'s-pending'))]),'No hay órdenes.')] }],
+         (r.ext?badge('Factura externa','ok'):(r.gen<=0.004?badge('Sin importe','no'):badge(r.pend<=0.004?'Pagado':(r.paid>0?'Pago parcial':'Pendiente'),r.pend<=0.004?'ok':'s-pending')))]),'No hay órdenes.')] }],
  materiales:['Materiales y tickets',()=>{ const rc=((M&&M.receipts)||[]).filter(r=>!TEST.has(r.order_id)), od=((M&&M.orders)||[]).filter(x=>!TEST.has(x.id));
    return [kpis([[rc.length,'tickets por revisar'],[od.length,'órdenes con materiales pendientes de AMJ']]),
      src('Datos en vivo del servidor: tickets que la IA no pudo validar y órdenes terminadas cuyos materiales esperan decisión de AMJ. La revisión se hace en la app.'),
