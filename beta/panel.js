@@ -716,7 +716,7 @@ function ingCerrar(){ ingForm=null; renderSec() }
 async function ingEnviar(){ const f=ingForm; let nombre, args, hecho;
   const imp=payNum(f.importe), iva=f.iva===undefined?21:payNum(f.iva);
   if(f.tipo==='fijo'){
-    if(!f.cliente.trim()) return ingFallo('Escribe el cliente.'); if(!f.concepto.trim()) return ingFallo('Escribe el concepto, por ejemplo «Cuota mensual Valencia».');
+    if(!f.cliente.trim()) return ingFallo('Escribe el cliente.'); if(!f.concepto.trim()) return ingFallo('Escribe el concepto, por ejemplo «Cuota mensual» y la ciudad.');
     if(!(imp>0)) return ingFallo('El importe mensual sin IVA debe ser mayor que cero.'); if(!(iva>=0&&iva<=100)) return ingFallo('El IVA debe estar entre 0 y 100.');
     if(!f.desde) return ingFallo('Pon desde qué fecha vale esta cuota.'); if(f.hasta&&f.hasta<f.desde) return ingFallo('La fecha de fin no puede ser anterior al inicio.');
     nombre='amj_admin_ingreso_fijo_guardar'; args={p_id:f.id,p_cliente:f.cliente.trim(),p_concepto:f.concepto.trim(),p_importe:imp,p_iva:iva,p_desde:f.desde,p_hasta:f.hasta||null,p_notas:f.notas.trim()||null};
@@ -730,7 +730,7 @@ async function ingEnviar(){ const f=ingForm; let nombre, args, hecho;
     hecho='Extra de '+f.cliente.trim()+': '+eur(imp)+' + IVA · '+f.concepto.trim()+'.' }
   else if(f.tipo==='mes'){
     if(!/^\d{4}-\d{2}$/.test(f.mes)) return ingFallo('Elige el mes.'); if(!(imp>=0)) return ingFallo('Escribe el importe real de ese mes, sin IVA. Puede ser 0 si no se facturó.');
-    if(f.motivo.trim().length<3) return ingFallo('Escribe el motivo, por ejemplo «mes partido del 19 al 31».');
+    if(f.motivo.trim().length<3) return ingFallo('Escribe el motivo, por ejemplo «mes partido».');
     nombre='amj_admin_ingreso_fijo_mes'; args={p_fijo:f.f.id,p_mes:f.mes+'-01',p_importe:imp,p_motivo:f.motivo.trim()};
     hecho=f.f.cliente+' · '+f.f.concepto+': '+mesTxt(f.mes)+' queda en '+eur(imp)+'.' }
   else { if(f.motivo.trim().length<5) return ingFallo('Escribe el motivo de la anulación.');
@@ -752,17 +752,17 @@ function ingPanel(clientes){ const f=ingForm; if(!f) return null; const c=el('di
     const dl=el('datalist'); dl.id='ingcl'; clientes.forEach(n=>{ const o=el('option'); o.value=n; dl.append(o) }); const w=campo('Cliente',i); w.append(dl); return w };
   if(f.tipo==='fijo'){ c.append(el('h3',null,f.nuevo?'Añadir cuota fija':'Corregir cuota fija'));
     c.append(src('Una cuota por cada contrato o ciudad. Importe SIN IVA. Si la cuota sigue vigente, deja «Hasta» vacío. Cuando cambie el importe, pon fecha de fin a esta y añade la nueva.'));
-    fila.append(cli(),campo('Concepto',payEntrada(f.concepto,v=>{f.concepto=v},'text',{maxLength:200,placeholder:'Cuota mensual Valencia'})),
-      campo('Importe al mes, sin IVA',payEntrada(f.importe,v=>{f.importe=v},'text',{inputMode:'decimal',placeholder:'2000,00'})),campo('IVA %',payEntrada(f.iva,v=>{f.iva=v},'text',{inputMode:'decimal'})),
+    fila.append(cli(),campo('Concepto',payEntrada(f.concepto,v=>{f.concepto=v},'text',{maxLength:200,placeholder:'Cuota mensual'})),
+      campo('Importe al mes, sin IVA',payEntrada(f.importe,v=>{f.importe=v},'text',{inputMode:'decimal',placeholder:'0,00'})),campo('IVA %',payEntrada(f.iva,v=>{f.iva=v},'text',{inputMode:'decimal'})),
       campo('Desde',payEntrada(f.desde,v=>{f.desde=v},'date')),campo('Hasta (vacío = sigue vigente)',payEntrada(f.hasta,v=>{f.hasta=v},'date')),campo('Notas',payEntrada(f.notas,v=>{f.notas=v},'text',{maxLength:1000}))) }
   else if(f.tipo==='extra'){ c.append(el('h3',null,f.nuevo?'Añadir ingreso extra':'Corregir ingreso extra'));
     c.append(src('Extra es cualquier trabajo que AMJ factura fuera de una cuota, a cualquier cliente. Importe SIN IVA y SIN materiales: los materiales van aparte. Si pones el número de orden, el panel lo cruza con lo que costó ese trabajo.'));
-    fila.append(cli(),campo('Fecha',payEntrada(f.fecha,v=>{f.fecha=v},'date')),campo('Trabajo facturado',payEntrada(f.concepto,v=>{f.concepto=v},'text',{maxLength:300,placeholder:'Pintura de habitación'})),
-      campo('Importe, sin IVA',payEntrada(f.importe,v=>{f.importe=v},'text',{inputMode:'decimal',placeholder:'350,00'})),campo('IVA %',payEntrada(f.iva,v=>{f.iva=v},'text',{inputMode:'decimal'})),
+    fila.append(cli(),campo('Fecha',payEntrada(f.fecha,v=>{f.fecha=v},'date')),campo('Trabajo facturado',payEntrada(f.concepto,v=>{f.concepto=v},'text',{maxLength:300,placeholder:'Qué trabajo se factura'})),
+      campo('Importe, sin IVA',payEntrada(f.importe,v=>{f.importe=v},'text',{inputMode:'decimal',placeholder:'0,00'})),campo('IVA %',payEntrada(f.iva,v=>{f.iva=v},'text',{inputMode:'decimal'})),
       campo('Orden AMJ (opcional)',payEntrada(f.orden,v=>{f.orden=v},'text',{inputMode:'numeric',placeholder:'430'})),campo('N.º de factura (opcional)',payEntrada(f.factura,v=>{f.factura=v},'text',{maxLength:60})),campo('Notas',payEntrada(f.notas,v=>{f.notas=v},'text',{maxLength:1000}))) }
   else if(f.tipo==='mes'){ c.append(el('h3',null,'Importe real de un mes · '+f.f.cliente+' · '+f.f.concepto));
     c.append(src('Para un mes que no se facturó por la cuota entera ('+eur(f.f.importe_mensual)+'): mes partido, descuento o mes sin facturar. Escribe lo que facturaste de verdad, sin IVA.'));
-    fila.append(campo('Mes',payEntrada(f.mes,v=>{f.mes=v},'month')),campo('Importe real de ese mes, sin IVA',payEntrada(f.importe,v=>{f.importe=v},'text',{inputMode:'decimal'})),campo('Motivo',payEntrada(f.motivo,v=>{f.motivo=v},'text',{maxLength:500,placeholder:'Mes partido: del 19 al 31'}))) }
+    fila.append(campo('Mes',payEntrada(f.mes,v=>{f.mes=v},'month')),campo('Importe real de ese mes, sin IVA',payEntrada(f.importe,v=>{f.importe=v},'text',{inputMode:'decimal'})),campo('Motivo',payEntrada(f.motivo,v=>{f.motivo=v},'text',{maxLength:500,placeholder:'Mes partido, descuento…'}))) }
   else { c.append(el('h3',null,'Anular · '+f.titulo));
     c.append(src('No se borra: deja de contar en los totales y queda en el historial como anulado, con tu motivo.'));
     fila.append(campo('Motivo de la anulación',payEntrada(f.motivo,v=>{f.motivo=v},'text',{maxLength:500}))) }
