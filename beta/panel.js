@@ -41,7 +41,7 @@ const exigeEntorno=()=>{ if(!ENT) throw new Error(ENT_ERR||'Entorno todavía sin
 const sesionDeEnsayoValida=tok=>{ if(!ENSAYO||(ENT&&ENT.dobles)) return true; try{ return JSON.parse(atob(tok.split('.')[1].replace(/-/g,'+').replace(/_/g,'/'))).iss==='https://'+REF_PRUEBAS+'.supabase.co/auth/v1' }catch(e){ return false } };
 const TZ='Europe/Madrid', POLL=15000, PAGE=100, MAXPAGES=200, STORE='amj.panel.session'+(ENSAYO?'.ensayo':'');
 const $=id=>document.getElementById(id);
-let session=null, WARN='', TEST=new Set(), T=null, M=null, P=null, RH=null, payT='', sec='ordenes', kpiDays='all', kpiFrom='', kpiTo='', RV=null, CP=null, repCl='', repDay='', repPer='dia', repSel=new Set(), repSelW=new Set(), repView=false, repAuto=false, repMsg='', O=[], prevRev={}, view='all', lastOk=0, timer=null, loading=false;
+let session=null, WARN='', TEST=new Set(), T=null, M=null, P=null, ING=null, RH=null, payT='', sec='ordenes', kpiDays='all', kpiFrom='', kpiTo='', RV=null, CP=null, repCl='', repDay='', repPer='dia', repSel=new Set(), repSelW=new Set(), repView=false, repAuto=false, repMsg='', O=[], prevRev={}, view='all', lastOk=0, timer=null, loading=false;
 
 /* ---------- sesión ---------- */
 function storage(){ try{ return localStorage.getItem(STORE)?localStorage:sessionStorage }catch(e){ return null } }
@@ -64,6 +64,16 @@ async function rpc(name,args){ exigeEntorno();
   let r=await fetch(SB+'/rest/v1/rpc/'+name,{method:'POST',headers:{apikey:KEY,Authorization:'Bearer '+session.access_token,'Content-Type':'application/json'},body:JSON.stringify(args)});
   if(r.status===401){ await refresh(); r=await fetch(SB+'/rest/v1/rpc/'+name,{method:'POST',headers:{apikey:KEY,Authorization:'Bearer '+session.access_token,'Content-Type':'application/json'},body:JSON.stringify(args)}); }
   const txt=await r.text(); if(!r.ok){ const e=new Error(/ACCESS_DENIED/.test(txt)?'ACCESS_DENIED':'HTTP '+r.status); e.status=r.status; throw e }
+  return JSON.parse(txt);
+}
+
+/* Escrituras: igual que rpc(), pero conserva el mensaje del servidor para poder explicar al usuario por qué se rechaza. */
+async function rpcW(name,args){ exigeEntorno();
+  if(!session) throw new Error('NO_SESSION');
+  if(Date.now()>session.expires_at-120000) await refresh();
+  const go=()=>fetch(SB+'/rest/v1/rpc/'+name,{method:'POST',headers:{apikey:KEY,Authorization:'Bearer '+session.access_token,'Content-Type':'application/json'},body:JSON.stringify(args)});
+  let r=await go(); if(r.status===401){ await refresh(); r=await go() }
+  const txt=await r.text(); if(!r.ok){ let m=txt; try{ m=JSON.parse(txt).message||txt }catch(_){ } const e=new Error(m||('HTTP '+r.status)); e.status=r.status; throw e }
   return JSON.parse(txt);
 }
 
@@ -488,12 +498,13 @@ async function load(){
     try{ M=await rpc('amj_admin_materials_pending',{}) }catch(e){ if(e.message==='ACCESS_DENIED') throw e }
     try{ RV=await rpc('amj_admin_reviews',{}) }catch(e){ if(e.message==='ACCESS_DENIED') throw e }
     if(sec==='clientes'||CP===null){ try{ CP=await rpc('amj_client_properties',{}) }catch(e){ if(e.message==='ACCESS_DENIED') throw e } }
-    if(sec==='pagos'||P===null){ try{ P=await rpc('amj_admin_payouts',{}) }catch(e){ if(e.message==='ACCESS_DENIED') throw e } }
+    if(sec==='pagos'||sec==='ingresos'||P===null){ try{ P=await rpc('amj_admin_payouts',{}) }catch(e){ if(e.message==='ACCESS_DENIED') throw e } }
+    if(sec==='ingresos'||ING===null){ try{ ING=await rpc('amj_admin_ingresos',{}) }catch(e){ if(e.message==='ACCESS_DENIED') throw e } }
     if(sec==='materiales'||RH===null){ try{ RH=await rpc('amj_admin_receipts_history',{p_days:60}) }catch(e){ if(e.message==='ACCESS_DENIED') throw e } }
     lastOk=Date.now(); if(WARN) showErr(WARN); else $('err').hidden=true; render(changed); fillFilters();
     /* Con el formulario de transferencia abierto no se repinta la sección: el refresco de 15 s
        no debe borrar ni desenfocar lo que Antonio está escribiendo. */
-    if(!payForm) renderSec();
+    if(!payForm&&!ingForm) renderSec();
   }catch(e){
     if(e.message==='ACCESS_DENIED'){ showErr('Esta cuenta no es de administración. Entra con la cuenta de administrador de AMJ.'); logout(); }
     else if(e.status===400||e.message==='NO_SESSION'){ logout(); }
@@ -621,12 +632,12 @@ async function payEnviar(f){ const v=payValida(f); if(v.error){ f.error=v.error;
   try{
     for(const parte of v.partes){
       const paid=new Date(f.fecha+'T12:00:00').toISOString();
-      const res=await rpc('amj_record_technician_bank_transfer',{p_id:parte.id,p_order:f.orderId,p_component:parte.comp,
+      const res=await rpcW('amj_record_technician_bank_transfer',{p_id:parte.id,p_order:f.orderId,p_component:parte.comp,
         p_amount:parte.imp,p_paid_at:paid,p_bank_reference:f.banco.trim(),p_concept:f.concepto.trim()});
       (res&&res.duplicate?repetidos:hechos).push(parte.txt+' '+eur(parte.imp));
     }
     payMsg={ok:true,txt:'AMJ-'+f.ref+': '+(hechos.length?'anotado '+hechos.join(' y '):'')+(repetidos.length?(hechos.length?'. ':'')+'ya estaba anotado '+repetidos.join(' y '):'')+'.'};
-    payForm=null; P=null; await load();
+    payForm=null; try{ P=await rpc('amj_admin_payouts',{}) }catch(_){ P=null }
   }catch(e){ const t=(e&&e.message)||''; f.error=payErrTxt(t)+(hechos.length?' Sí quedó anotado: '+hechos.join(' y ')+'.':''); f.confirmando=false; payBusy=false; renderSec(); return }
   payBusy=false; renderSec() }
 function payPanel(){ const f=payForm; if(!f) return null;
@@ -648,6 +659,117 @@ function payPanel(){ const f=payForm; if(!f) return null;
     res.style.cssText='font-size:13.5px;font-weight:600;margin:4px 0 10px'; c.append(res);
     bar.append(bot(payBusy?'Anotando…':'Sí, anotar',()=>payEnviar(f),true),bot('No',()=>{ f.confirmando=false; renderSec() })) }
   c.append(bar); return c }
+/* ---------- Ingresos y resultado (autorizado por Antonio el 26/11/2026, «OK INGRESOS») ----------
+   Reglas de Antonio: FIJOS son las cuotas de contrato. EXTRA es todo lo que AMJ factura fuera de una cuota, a cualquier
+   cliente, con contrato o sin él: no hay lista cerrada, cada extra se anota. Los MATERIALES no son extras y van aparte.
+   Entradas (ingresos_fijos, ingresos_extra) y salidas (pagos a técnicos) viven en tablas distintas del servidor y aquí
+   se cruzan por cliente, mes y orden. Todo SIN IVA. Nada se borra: se anula con motivo. */
+let ingForm=null, ingMsg=null, ingBusy=false;
+const ING_ERR={
+  ACCESS_DENIED:'Esta cuenta no es de administración de AMJ.',
+  INGRESO_FIJO_SOLAPADO:'Ya hay una cuota vigente de ese cliente y concepto en esas fechas. Pon fecha de fin a la anterior o cambia el concepto.',
+  INGRESO_FIJO_NO_VALIDO:'Revisa el cliente, el concepto, el importe (mayor que cero, dos decimales) y las fechas.',
+  INGRESO_FIJO_CON_MESES_FUERA:'Hay meses ajustados que quedarían fuera del periodo nuevo.',
+  INGRESO_EXTRA_NO_VALIDO:'Revisa el cliente, el concepto, el importe (mayor que cero, dos decimales) y la fecha.',
+  INGRESO_MES_NO_VALIDO:'Revisa el importe del mes y escribe el motivo.',
+  MES_FUERA_DEL_PERIODO:'Ese mes está fuera del periodo de la cuota.',
+  INGRESO_ANULADO:'Ese apunte está anulado y ya no se puede cambiar.',
+  INGRESO_NO_ENCONTRADO:'No encuentro ese apunte. Recarga el panel.',
+  FACTURA_YA_ANOTADA:'Ese número de factura ya está anotado en otro extra.',
+  ORDEN_NO_ENCONTRADA:'No existe ninguna orden con ese número.',
+  ORDEN_DE_PRUEBA:'Esa orden es de prueba: no admite ingresos.',
+  ANULACION_NO_VALIDA:'Escribe el motivo de la anulación (al menos 5 letras).'};
+const ingErrTxt=t=>{ for(const k in ING_ERR) if(t.indexOf(k)>=0) return ING_ERR[k]; return 'El servidor no lo ha aceptado. No se ha guardado nada.' };
+const MESES=['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
+const mesTxt=m=>MESES[Number(m.slice(5,7))-1]+' '+m.slice(0,4);
+const mesFin=m=>{ const y=Number(m.slice(0,4)), mm=Number(m.slice(5,7)); return m+'-'+String(new Date(Date.UTC(y,mm,0)).getUTCDate()).padStart(2,'0') };
+const mesMas=(m,n)=>{ const d=new Date(Date.UTC(Number(m.slice(0,4)),Number(m.slice(5,7))-1+n,1)); return d.toISOString().slice(0,7) };
+const fechaTxt=d=>d?d.slice(8,10)+'/'+d.slice(5,7)+'/'+d.slice(0,4):'—';
+/* Importe de una cuota en un mes: el ajustado si existe; si no, la cuota entera. Un mes incompleto sin ajustar se avisa. */
+function ingFijoMes(f,m,ovr){ const d0=f.desde.slice(0,7), d1=f.hasta?f.hasta.slice(0,7):null;
+  if(m<d0||(d1&&m>d1)) return null; const o=ovr[f.id+'|'+m];
+  const parcial=(m===d0&&f.desde.slice(8)!=='01')||(!!d1&&m===d1&&f.hasta!==mesFin(m));
+  return {imp:o?Number(o.importe):Number(f.importe_mensual), ajustado:!!o, parcial:parcial&&!o, motivo:o?o.motivo:''} }
+function ingCalc(){ const hoyM=todayStr().slice(0,7), desdeM=mesMas(hoyM,-11);
+  const F=(ING.fijos||[]).filter(f=>!f.anulado_en), X=(ING.extras||[]).filter(x=>!x.anulado_en);
+  const ovr={}; (ING.meses||[]).forEach(m=>{ ovr[m.fijo_id+'|'+String(m.mes).slice(0,7)]=m });
+  const refCl={}; O.forEach(o=>{ refCl[Number(o.ref)]=clName(o.cl) });
+  const cells={}, avisos=[];
+  const cell=(m,c)=>{ const k=m+'|'+String(c).toLowerCase(); return cells[k]=cells[k]||{mes:m,cliente:c,fijos:0,extras:0,mo:0,mat:0,ord:0} };
+  const dentro=m=>m>=desdeM&&m<=hoyM;
+  (P||[]).filter(x=>!/prueba|NO ASIGNAR/i.test(x.technician||'')).forEach(x=>{ if(!x.finished_at) return; const m=dayOf(x.finished_at).slice(0,7); if(!dentro(m)) return;
+    const c=cell(m,refCl[Number(x.reference)]||'Sin cliente'); c.mo+=Number(x.labor_total||0)/1.21; c.mat+=Number(x.materials_total||0); c.ord++ });
+  for(let m=desdeM;m<=hoyM;m=mesMas(m,1)) F.forEach(f=>{ const r=ingFijoMes(f,m,ovr); if(!r) return; cell(m,f.cliente).fijos+=r.imp; if(r.parcial) avisos.push({f,m,imp:r.imp}) });
+  X.forEach(x=>{ const m=String(x.fecha).slice(0,7); if(dentro(m)) cell(m,x.cliente).extras+=Number(x.importe) });
+  const lista=Object.values(cells).map(c=>({...c,entra:c.fijos+c.extras,queda:c.fijos+c.extras-c.mo}));
+  const porMes={}; lista.forEach(c=>{ const g=porMes[c.mes]=porMes[c.mes]||{mes:c.mes,fijos:0,extras:0,mo:0,mat:0,ord:0}; g.fijos+=c.fijos; g.extras+=c.extras; g.mo+=c.mo; g.mat+=c.mat; g.ord+=c.ord });
+  const meses=Object.values(porMes).map(g=>({...g,entra:g.fijos+g.extras,queda:g.fijos+g.extras-g.mo})).sort((a,b)=>b.mes.localeCompare(a.mes));
+  lista.sort((a,b)=>b.mes.localeCompare(a.mes)||a.cliente.localeCompare(b.cliente));
+  return {hoyM,meses,lista,avisos,F,X} }
+function ingAbrir(tipo,dato){ ingMsg=null;
+  if(tipo==='fijo') ingForm={tipo,id:dato?dato.id:nuevoId(),nuevo:!dato,cliente:dato?dato.cliente:'',concepto:dato?dato.concepto:'Cuota mensual',importe:dato?String(dato.importe_mensual):'',iva:dato?String(Number(dato.iva_pct)):'21',desde:dato?dato.desde:'',hasta:dato&&dato.hasta?dato.hasta:'',notas:dato&&dato.notas?dato.notas:'',error:''};
+  else if(tipo==='extra') ingForm={tipo,id:dato?dato.id:nuevoId(),nuevo:!dato,cliente:dato?dato.cliente:'',fecha:dato?dato.fecha:hoyISO(),concepto:dato?dato.concepto:'',importe:dato?String(dato.importe):'',iva:dato?String(Number(dato.iva_pct)):'21',orden:dato&&dato.orden_ref?String(dato.orden_ref):'',factura:dato&&dato.numero_factura?dato.numero_factura:'',notas:dato&&dato.notas?dato.notas:'',error:''};
+  else if(tipo==='mes') ingForm={tipo,f:dato.f,mes:dato.m||todayStr().slice(0,7),importe:dato.imp!=null?String(dato.imp):'',motivo:'',error:''};
+  else ingForm={tipo:'anular',que:dato.que,id:dato.id,titulo:dato.titulo,motivo:'',error:''};
+  renderSec(); const b=$('obody'); if(b&&b.scrollIntoView) b.scrollIntoView({block:'start'}) }
+function ingCerrar(){ ingForm=null; renderSec() }
+async function ingEnviar(){ const f=ingForm; let nombre, args, hecho;
+  const imp=payNum(f.importe), iva=f.iva===undefined?21:payNum(f.iva);
+  if(f.tipo==='fijo'){
+    if(!f.cliente.trim()) return ingFallo('Escribe el cliente.'); if(!f.concepto.trim()) return ingFallo('Escribe el concepto, por ejemplo «Cuota mensual Valencia».');
+    if(!(imp>0)) return ingFallo('El importe mensual sin IVA debe ser mayor que cero.'); if(!(iva>=0&&iva<=100)) return ingFallo('El IVA debe estar entre 0 y 100.');
+    if(!f.desde) return ingFallo('Pon desde qué fecha vale esta cuota.'); if(f.hasta&&f.hasta<f.desde) return ingFallo('La fecha de fin no puede ser anterior al inicio.');
+    nombre='amj_admin_ingreso_fijo_guardar'; args={p_id:f.id,p_cliente:f.cliente.trim(),p_concepto:f.concepto.trim(),p_importe:imp,p_iva:iva,p_desde:f.desde,p_hasta:f.hasta||null,p_notas:f.notas.trim()||null};
+    hecho='Cuota de '+f.cliente.trim()+' · '+f.concepto.trim()+': '+eur(imp)+' al mes + IVA.' }
+  else if(f.tipo==='extra'){
+    if(!f.cliente.trim()) return ingFallo('Escribe el cliente.'); if(!f.concepto.trim()) return ingFallo('Escribe qué trabajo se factura.');
+    if(!(imp>0)) return ingFallo('El importe sin IVA debe ser mayor que cero.'); if(!(iva>=0&&iva<=100)) return ingFallo('El IVA debe estar entre 0 y 100.');
+    if(!f.fecha) return ingFallo('Pon la fecha.'); const ord=f.orden.trim().replace(/^AMJ-?/i,'');
+    if(ord&&!/^\d+$/.test(ord)) return ingFallo('El número de orden son solo cifras, por ejemplo 430.');
+    nombre='amj_admin_ingreso_extra_guardar'; args={p_id:f.id,p_cliente:f.cliente.trim(),p_fecha:f.fecha,p_concepto:f.concepto.trim(),p_importe:imp,p_iva:iva,p_orden:ord?Number(ord):null,p_factura:f.factura.trim()||null,p_notas:f.notas.trim()||null};
+    hecho='Extra de '+f.cliente.trim()+': '+eur(imp)+' + IVA · '+f.concepto.trim()+'.' }
+  else if(f.tipo==='mes'){
+    if(!/^\d{4}-\d{2}$/.test(f.mes)) return ingFallo('Elige el mes.'); if(!(imp>=0)) return ingFallo('Escribe el importe real de ese mes, sin IVA. Puede ser 0 si no se facturó.');
+    if(f.motivo.trim().length<3) return ingFallo('Escribe el motivo, por ejemplo «mes partido del 19 al 31».');
+    nombre='amj_admin_ingreso_fijo_mes'; args={p_fijo:f.f.id,p_mes:f.mes+'-01',p_importe:imp,p_motivo:f.motivo.trim()};
+    hecho=f.f.cliente+' · '+f.f.concepto+': '+mesTxt(f.mes)+' queda en '+eur(imp)+'.' }
+  else { if(f.motivo.trim().length<5) return ingFallo('Escribe el motivo de la anulación.');
+    nombre='amj_admin_ingreso_anular'; args={p_tipo:f.que,p_id:f.id,p_motivo:f.motivo.trim()}; hecho='Anulado: '+f.titulo+'.' }
+  ingBusy=true; f.error=''; renderSec();
+  try{ await rpcW(nombre,args); ingMsg=hecho; ingForm=null;
+    /* Se vuelve a leer del servidor en el acto: lo que se ve es lo que ha quedado guardado. */
+    try{ ING=await rpc('amj_admin_ingresos',{}) }catch(_){ ING=null }
+    ingBusy=false; renderSec() }
+  catch(e){ ingBusy=false; f.error=ingErrTxt((e&&e.message)||''); renderSec() } }
+function ingFallo(t){ ingForm.error=t; renderSec() }
+function ingBoton(txt,fn,primario){ const b=el('button',null,txt); b.disabled=ingBusy;
+  b.style.cssText='border:1px solid var(--line);border-radius:9px;padding:9px 13px;font:inherit;cursor:pointer;'+(primario?'background:var(--az,#0b3b6f);color:#fff;border-color:transparent':'background:#fff');
+  b.onclick=ev=>{ ev.stopPropagation(); fn() }; return b }
+function ingMini(txt,fn){ const b=ingBoton(txt,fn); b.style.padding='5px 9px'; b.style.fontSize='12.5px'; b.style.marginRight='6px'; return b }
+function ingPanel(clientes){ const f=ingForm; if(!f) return null; const c=el('div','card'), fila=el('div'); fila.style.cssText='display:flex;gap:14px;flex-wrap:wrap';
+  const campo=(et,nodo,nota)=>{ const w=payCampo(et,nodo,nota); w.style.flex='1 1 200px'; return w };
+  const cli=()=>{ const i=payEntrada(f.cliente,v=>{f.cliente=v},'text',{placeholder:'Elige uno o escribe uno nuevo',maxLength:120}); i.setAttribute('list','ingcl');
+    const dl=el('datalist'); dl.id='ingcl'; clientes.forEach(n=>{ const o=el('option'); o.value=n; dl.append(o) }); const w=campo('Cliente',i); w.append(dl); return w };
+  if(f.tipo==='fijo'){ c.append(el('h3',null,f.nuevo?'Añadir cuota fija':'Corregir cuota fija'));
+    c.append(src('Una cuota por cada contrato o ciudad. Importe SIN IVA. Si la cuota sigue vigente, deja «Hasta» vacío. Cuando cambie el importe, pon fecha de fin a esta y añade la nueva.'));
+    fila.append(cli(),campo('Concepto',payEntrada(f.concepto,v=>{f.concepto=v},'text',{maxLength:200,placeholder:'Cuota mensual Valencia'})),
+      campo('Importe al mes, sin IVA',payEntrada(f.importe,v=>{f.importe=v},'text',{inputMode:'decimal',placeholder:'2000,00'})),campo('IVA %',payEntrada(f.iva,v=>{f.iva=v},'text',{inputMode:'decimal'})),
+      campo('Desde',payEntrada(f.desde,v=>{f.desde=v},'date')),campo('Hasta (vacío = sigue vigente)',payEntrada(f.hasta,v=>{f.hasta=v},'date')),campo('Notas',payEntrada(f.notas,v=>{f.notas=v},'text',{maxLength:1000}))) }
+  else if(f.tipo==='extra'){ c.append(el('h3',null,f.nuevo?'Añadir ingreso extra':'Corregir ingreso extra'));
+    c.append(src('Extra es cualquier trabajo que AMJ factura fuera de una cuota, a cualquier cliente. Importe SIN IVA y SIN materiales: los materiales van aparte. Si pones el número de orden, el panel lo cruza con lo que costó ese trabajo.'));
+    fila.append(cli(),campo('Fecha',payEntrada(f.fecha,v=>{f.fecha=v},'date')),campo('Trabajo facturado',payEntrada(f.concepto,v=>{f.concepto=v},'text',{maxLength:300,placeholder:'Pintura de habitación'})),
+      campo('Importe, sin IVA',payEntrada(f.importe,v=>{f.importe=v},'text',{inputMode:'decimal',placeholder:'350,00'})),campo('IVA %',payEntrada(f.iva,v=>{f.iva=v},'text',{inputMode:'decimal'})),
+      campo('Orden AMJ (opcional)',payEntrada(f.orden,v=>{f.orden=v},'text',{inputMode:'numeric',placeholder:'430'})),campo('N.º de factura (opcional)',payEntrada(f.factura,v=>{f.factura=v},'text',{maxLength:60})),campo('Notas',payEntrada(f.notas,v=>{f.notas=v},'text',{maxLength:1000}))) }
+  else if(f.tipo==='mes'){ c.append(el('h3',null,'Importe real de un mes · '+f.f.cliente+' · '+f.f.concepto));
+    c.append(src('Para un mes que no se facturó por la cuota entera ('+eur(f.f.importe_mensual)+'): mes partido, descuento o mes sin facturar. Escribe lo que facturaste de verdad, sin IVA.'));
+    fila.append(campo('Mes',payEntrada(f.mes,v=>{f.mes=v},'month')),campo('Importe real de ese mes, sin IVA',payEntrada(f.importe,v=>{f.importe=v},'text',{inputMode:'decimal'})),campo('Motivo',payEntrada(f.motivo,v=>{f.motivo=v},'text',{maxLength:500,placeholder:'Mes partido: del 19 al 31'}))) }
+  else { c.append(el('h3',null,'Anular · '+f.titulo));
+    c.append(src('No se borra: deja de contar en los totales y queda en el historial como anulado, con tu motivo.'));
+    fila.append(campo('Motivo de la anulación',payEntrada(f.motivo,v=>{f.motivo=v},'text',{maxLength:500}))) }
+  c.append(fila);
+  if(f.error){ const e=el('div',null,f.error); e.style.cssText='color:var(--no,#b4232a);font-size:13px;margin:4px 0 10px'; c.append(e) }
+  const bar=el('div'); bar.style.cssText='display:flex;gap:10px;flex-wrap:wrap;margin-top:4px';
+  bar.append(ingBoton(ingBusy?'Guardando…':(f.tipo==='anular'?'Anular':'Guardar'),ingEnviar,true),ingBoton('Cancelar',ingCerrar)); c.append(bar); return c }
 const DRM={}, DRT={}; let drId=null;
 function drBloque(c,titulo){ c.append(el('h4','dsh',titulo)); const b=el('div','dsb'); c.append(b); return b }
 function drFila(b,k,v,cls){ const r=el('div','row'+(cls?' '+cls:'')), s=el('span'); if(v instanceof Node) s.append(v); else s.textContent=v; r.append(el('span',null,k),s); b.append(r) }
@@ -799,6 +921,30 @@ const SECS={
        return {n:L.length,c:p.code||p.ad,cells:[p.code||'—',p.ad||'—',p.ci,L.length,L.filter(o=>o.st==='completed').length,L.filter(o=>o.st!=='completed').length,L.length?dur(L.reduce((a,o)=>a+(o.min||0),0)||null):'—',L.length?fmtD(last):'—']} })
        .sort((a,b)=>b.n-a.n||a.c.localeCompare(b.c));
      out.push(card(clName(g.cl)+' · '+g.ci+' · '+P_.length+(P_.length===1?' inmueble':' inmuebles')+' · '+conOrd+' con órdenes',['Piso','Dirección','Ciudad','Órdenes','Terminadas','Abiertas','Horas','Última'],rows)) });
+   return out }],
+ ingresos:['Ingresos y resultado',()=>{ if(!ING) return [el('div','empty','Cargando ingresos…')];
+   const R=ingCalc(), out=[], num=v=>eur(v), cur=R.meses.find(m=>m.mes===R.hoyM)||{fijos:0,extras:0,mo:0,entra:0,queda:0};
+   const clientes=[...new Set([...(ING.clientes||[]),...(ING.fijos||[]).map(f=>f.cliente),...(ING.extras||[]).map(x=>x.cliente)])].sort((a,b)=>a.localeCompare(b));
+   out.push(kpis([[num(cur.fijos),'fijos de '+mesTxt(R.hoyM)],[num(cur.extras),'extras de '+mesTxt(R.hoyM)],[num(cur.mo),'mano de obra de técnicos'],[num(cur.queda),'queda antes de gastos generales']]));
+   out.push(src('Todo SIN IVA. Queda = fijos + extras − mano de obra de técnicos. No incluye materiales, que van en su columna aparte, ni gastos generales, que todavía no se anotan aquí. El coste solo recoge los trabajos hechos por la app de AMJ. Últimos 12 meses.'));
+   if(ingMsg){ const a=el('div','card'), t=el('div',null,ingMsg); t.style.cssText='font-weight:600'; a.append(t); out.push(a) }
+   const form=ingPanel(clientes); if(form) out.push(form);
+   else { const bar=el('div','card'), w=el('div'); w.style.cssText='display:flex;gap:10px;flex-wrap:wrap'; w.append(ingBoton('＋ Añadir cuota fija',()=>ingAbrir('fijo'),true),ingBoton('＋ Añadir ingreso extra',()=>ingAbrir('extra'),true)); bar.append(w); out.push(bar) }
+   if(R.avisos.length) out.push(card('Meses incompletos sin ajustar',['Cliente','Cuota','Mes','Periodo real','Cuenta ahora',''],
+     R.avisos.map(a=>[a.f.cliente,a.f.concepto,mesTxt(a.m),(a.m===a.f.desde.slice(0,7)?'desde el '+fechaTxt(a.f.desde):'')+(a.f.hasta&&a.m===a.f.hasta.slice(0,7)?' hasta el '+fechaTxt(a.f.hasta):''),eur(a.imp)+' (cuota entera)',ingMini('Poner el importe real',()=>ingAbrir('mes',{f:a.f,m:a.m,imp:a.imp}))])));
+   out.push(card('Resultado por mes',['Mes','Fijos','Extras','Entra','Mano de obra técnicos','Queda','Materiales (aparte)','Órdenes'],
+     R.meses.map(m=>[mesTxt(m.mes)+(m.mes===R.hoyM?' · en curso':''),num(m.fijos),num(m.extras),num(m.entra),num(m.mo),num(m.queda),num(m.mat),m.ord]),'Todavía no hay cuotas, extras ni trabajos en los últimos 12 meses.'));
+   out.push(card('Por cliente y mes',['Mes','Cliente','Fijos','Extras','Entra','Mano de obra técnicos','Queda','Materiales (aparte)','Órdenes'],
+     R.lista.map(c=>[mesTxt(c.mes),c.cliente,num(c.fijos),num(c.extras),num(c.entra),num(c.mo),num(c.queda),num(c.mat),c.ord]),'Sin datos.'));
+   out.push(card('Cuotas fijas',['Cliente','Concepto','Al mes sin IVA','IVA','Con IVA','Desde','Hasta','Estado',''],
+     (ING.fijos||[]).map(f=>{ const an=!!f.anulado_en, acc=el('span'); if(!an) acc.append(ingMini('Corregir',()=>ingAbrir('fijo',f)),ingMini('Importe de un mes',()=>ingAbrir('mes',{f})),ingMini('Anular',()=>ingAbrir('anular',{que:'fijo',id:f.id,titulo:f.cliente+' · '+f.concepto})));
+       return [f.cliente,f.concepto,eur(f.importe_mensual),Number(f.iva_pct)+' %',eur(Number(f.importe_mensual)*(1+Number(f.iva_pct)/100)),fechaTxt(f.desde),f.hasta?fechaTxt(f.hasta):'vigente',
+         an?badge('Anulada','no'):badge(f.hasta&&f.hasta<todayStr()?'Terminada':'Vigente','ok'),an?el('span',null,f.anulado_motivo||''):acc] }),'Aún no hay ninguna cuota anotada. Pulsa «Añadir cuota fija».'));
+   const aj=(ING.meses||[]); if(aj.length){ const porId={}; (ING.fijos||[]).forEach(f=>porId[f.id]=f);
+     out.push(card('Meses con importe ajustado',['Cliente','Cuota','Mes','Importe real','Motivo'],aj.map(m=>{ const f=porId[m.fijo_id]||{cliente:'—',concepto:'—'}; return [f.cliente,f.concepto,mesTxt(String(m.mes).slice(0,7)),eur(m.importe),m.motivo] }))) }
+   out.push(card('Ingresos extra',['Fecha','Cliente','Trabajo facturado','Sin IVA','IVA','Con IVA','Orden','Factura','Estado',''],
+     (ING.extras||[]).map(x=>{ const an=!!x.anulado_en, acc=el('span'); if(!an) acc.append(ingMini('Corregir',()=>ingAbrir('extra',x)),ingMini('Anular',()=>ingAbrir('anular',{que:'extra',id:x.id,titulo:x.cliente+' · '+x.concepto+' · '+eur(x.importe)})));
+       return [fechaTxt(x.fecha),x.cliente,x.concepto,eur(x.importe),Number(x.iva_pct)+' %',eur(Number(x.importe)*(1+Number(x.iva_pct)/100)),x.orden_ref?'AMJ-'+x.orden_ref:'—',x.numero_factura||'—',an?badge('Anulado','no'):badge('Cuenta','ok'),an?el('span',null,x.anulado_motivo||''):acc] }),'Aún no hay ningún extra anotado. Pulsa «Añadir ingreso extra».'));
    return out }],
  pagos:['Pagos a técnicos',()=>{
    if(!P) return [el('div','empty','Cargando pagos…')];
@@ -1088,7 +1234,7 @@ $('lf').addEventListener('submit',async e=>{ e.preventDefault(); $('lerr').textC
   catch(err){ $('lerr').textContent=err.status===400?'Correo o contraseña incorrectos.':'No se pudo conectar. Inténtalo de nuevo.' }
   finally{ $('lb').disabled=false } });
 $('logout').onclick=logout; $('logout2').onclick=logout;
-document.querySelectorAll('.nav[data-sec]').forEach(n=>n.onclick=()=>{ sec=n.dataset.sec; if(sec==='pagos'||sec==='materiales') load(); document.querySelectorAll('.nav[data-sec]').forEach(x=>x.classList.toggle('on',x===n)); renderSec() }); $('sh').onclick=closeDr;
+document.querySelectorAll('.nav[data-sec]').forEach(n=>n.onclick=()=>{ sec=n.dataset.sec; if(sec==='pagos'||sec==='materiales'||sec==='ingresos') load(); document.querySelectorAll('.nav[data-sec]').forEach(x=>x.classList.toggle('on',x===n)); renderSec() }); $('sh').onclick=closeDr;
 document.addEventListener('keydown',e=>{ if(e.key==='Escape') closeDr() });
 document.addEventListener('visibilitychange',()=>{ if(!document.hidden&&session) load() });
 ['q','fc','ft','fs','fd','fp'].forEach(id=>$(id).addEventListener('input',()=>render()));
