@@ -236,11 +236,11 @@ function repFmt(L,d0,d1,WK,QN,MS,CL){ const addD0=(d,n)=>{ const x=new Date(d+'T
   L.forEach(o=>{ const g=el('div','rf-og'); g.append(el('div','rf-oh',(WK?dm(dayOf(o.fa))+' · ':'')+'AMJ-'+o.ref+' · '+(o.work||'').replace(/\.$/,'')+' · '+code(o))); const w=repPhotos(o); w.className='rf-ph'; g.append(w); g._m={id:o.id}; doc.append(g) });
   if(WK){ /* materiales */
     if((QN||MS)&&mload){ const withM=L.filter(o=>repMat(o).length), tot=sumM(allM,'total'), oT=o=>sumM(repMat(o),'total');
-      doc.append(H('Informe de materiales')); const p=el('p','rf-intro'); p.append(el('b',null,eur2(tot)+' en materiales en '+withM.length+' de las '+L.length+' órdenes finalizadas.'),document.createTextNode(' Importes según el ticket de compra o, si no lo hay, la autorización de AMJ. La base y el IVA se muestran solo cuando constan en el ticket.')); doc.append(p);
+      doc.append(H('Informe de materiales')); const p=el('p','rf-intro'); p.append(el('b',null,eur2(tot)+' en materiales en '+withM.length+' de las '+L.length+' órdenes finalizadas.'),document.createTextNode(' La base es la del ticket de compra o, si no lo hay, la del importe autorizado por AMJ, y el IVA es el 21 % que la ley obliga a repercutir.')); doc.append(p);
       const bx=el('div','rf-kp'); const kk=(v,t)=>{ const d=el('div'); d.append(el('b',null,v),el('span',null,t)); bx.append(d) };
-      { /* la etiqueta sale de la FUENTE registrada en el servidor (ticket o autorización), no de si hay desglose */
-        const tD=allM.filter(m=>m.fuente==='ticket'&&m.subtotal!=null&&m.iva!=null), tS=allM.filter(m=>m.fuente==='ticket'&&(m.subtotal==null||m.iva==null)), au=allM.filter(m=>m.fuente!=='ticket');
-        const partes=[tD.length?'con ticket: base '+eur2(sumM(tD,'subtotal'))+' · IVA '+eur2(sumM(tD,'iva')):'',tS.length?'con ticket sin desglose: '+eur2(sumM(tS,'total')):'',au.length?'autorizado por AMJ sin ticket: '+eur2(sumM(au,'total')):''].filter(Boolean);
+      { /* la etiqueta sale de la FUENTE registrada en el servidor: ticket aprobado o importe autorizado por AMJ */
+        const tD=allM.filter(m=>m.fuente==='ticket'), au=allM.filter(m=>m.fuente!=='ticket');
+        const partes=[tD.length?'con ticket: base '+eur2(sumM(tD,'subtotal'))+' · IVA '+eur2(sumM(tD,'iva')):'',au.length?'autorizado por AMJ sin ticket: base '+eur2(sumM(au,'subtotal'))+' · IVA '+eur2(sumM(au,'iva')):''].filter(Boolean);
         kk(eur2(tot),'total materiales, IVA incluido'+(partes.length?' ('+partes.join('; ')+')':'')) } kk(withM.length+' / '+L.length,'órdenes con materiales'+(L.length?' ('+Math.round(withM.length/L.length*100)+' %)':''));
       kk(withM.length?eur2(tot/withM.length):'—','gasto medio por orden con materiales'); kk(L.length?eur2(tot/L.length):'—','gasto medio por orden finalizada'); doc.append(bx);
       const spend=(title,keyf)=>{ const g=Object.create(null); withM.forEach(o=>{ const k=keyf(o); (g[k]=g[k]||{n:0,t:0}); g[k].n++; g[k].t+=oT(o) }); const ks=Object.keys(g).sort((x,y)=>g[y].t-g[x].t||(x<y?-1:x>y?1:0)); if(!ks.length) return; const mx=g[ks[0]].t||1;
@@ -248,13 +248,13 @@ function repFmt(L,d0,d1,WK,QN,MS,CL){ const addD0=(d,n)=>{ const x=new Date(d+'T
       spend('Gasto por tipo de trabajo',o=>o.sv||'Sin clasificar'); spend('Gasto por inmueble',repGrupoInmueble);
       if(withM.length){ doc.append(H('Por técnico')); const [t5,b5]=table(['Técnico','Órdenes con material','Total']); const g={}; withM.forEach(o=>{ const k=(o.tc||'—').trim().split(/\s+/)[0]; /* ante el cliente, solo el nombre de pila */ (g[k]=g[k]||{n:0,t:0}); g[k].n++; g[k].t+=oT(o) });
         Object.keys(g).sort((x,y)=>g[y].t-g[x].t||(x<y?-1:x>y?1:0)).forEach(k=>row(b5,[k,String(g[k].n),eur2(g[k].t)])); row(b5,['Total',String(withM.length),eur2(tot)],'tot'); doc.append(t5) } }
-    doc.append(H('Relación detallada de materiales'),el('p','rf-intro','Materiales de cada orden, por el importe del ticket de compra o, si no lo hay, el autorizado por AMJ. La base y el IVA son los del ticket cuando constan en él; si no constan, o el importe es autorizado sin ticket, va solo el total.'));
+    doc.append(H('Relación detallada de materiales'),el('p','rf-intro','Materiales de cada orden. La base es la del ticket de compra o, si no lo hay, la del importe autorizado por AMJ, y sobre ella se repercute el 21 % de IVA.'));
     const [t3,b3]=table(['Fecha','Orden / inmueble','Trabajo y material','Base','IVA','Total'],'mat'); const withM=L.filter(o=>repMat(o).length);
     if(!mload){ const e=td('Cargando materiales…'); e.colSpan=6; row(b3,[e]) } else if(!withM.length){ const e=td((MS?'Este mes':'Esta '+PW)+' no se han declarado materiales.'); e.colSpan=6; row(b3,[e]) }
     withM.forEach(o=>{ const M=repMat(o); M.forEach((m,i)=>{ const c=el('td'); if(!i) c.append(el('b',null,(o.work||'').replace(/\.$/,'')),el('br')); c.append(document.createTextNode((m.description||'—')+(m.fuente==='ticket'?' (ticket)':' (autorizado por AMJ, sin ticket)')));
         row(b3,[td(i?'':dm(dayOf(o.fa)),'nwr'),td(i?'':'AMJ-'+o.ref+' · '+code(o),'nwr'),c,td(m.subtotal==null?'—':eur2(m.subtotal),'r'),td(m.iva==null?'—':eur2(m.iva),'r'),td(eur2(m.total),'r')]) });
       if(M.length>1) row(b3,['','','Subtotal AMJ-'+o.ref,td(eur2(sumM(M,'subtotal')),'r'),td(eur2(sumM(M,'iva')),'r'),td(eur2(sumM(M,'total')),'r')],'sub') });
-    if(mload&&withM.length){ const des=allM.every(m=>m.subtotal!=null&&m.iva!=null); row(b3,['','','Total '+DELA,td(des?eur2(sumM(allM,'subtotal')):'—','r'),td(des?eur2(sumM(allM,'iva')):'—','r'),td(eur2(sumM(allM,'total')),'r')],'tot') }
+    if(mload&&withM.length){ row(b3,['','','Total '+DELA,td(eur2(sumM(allM,'subtotal')),'r'),td(eur2(sumM(allM,'iva')),'r'),td(eur2(sumM(allM,'total')),'r')],'tot') }
     doc.append(t3);
     const open=real().filter(o=>cls.includes(repCli(o))&&dayOf(o.ca)<=dc&&repAbiertaAl(o,dc)); /* mismo criterio que el KPI «abiertas» */
     if(open.length){ doc.append(H(live?'Órdenes abiertas a fecha de '+dm(dc):'Órdenes abiertas al cierre '+DELA)); const [t4,b4]=table(['Orden / inmueble','Trabajo','Estado']); open.sort((x,y)=>x.ref-y.ref).forEach(o=>{ /* estado: en un informe en curso, el de hoy; en uno cerrado, «abierta en esa fecha» y, si se terminó después, cuándo (primer cierre posterior al corte) */
@@ -416,23 +416,25 @@ function repSendOpen(){
   document.body.append(ov) }
 /* Bloque 4 · Aviso interno (no forma parte del informe ni del PDF): lo declarado por el técnico frente al justificante de compra.
    Importe declarado = líneas de material de la orden. Coste acreditado = justificantes aprobados. El importe a facturar lo decide AMJ. */
-/* Materiales del informe de cliente empresa (decisiones de Antonio, 21 y 22/11/2026). Fuente única: mat_informe, que calcula el servidor.
-   Con ticket aprobado manda el ticket, con la base y el IVA que constan en él; sin ticket, el importe autorizado por AMJ (solo total: no se
-   inventa base ni IVA). Sin ese dato del servidor NO se muestra ningún importe (nunca lo declarado) y el informe no se puede enviar. */
+/* Materiales del informe de cliente empresa (decisiones de Antonio, 21, 22 y 27/11/2026). Fuente única: mat_informe, que calcula el servidor.
+   Al cliente se le cobra la BASE del documento (la del ticket aprobado o, sin ticket, la de lo autorizado por AMJ), que es el coste base de
+   AMJ, y AMJ le suma el 21 % en la factura porque es lo que dice la ley del IVA. La base la da el servidor en base_cobro; sin ese dato NO se
+   muestra ningún importe (nunca lo declarado) y el informe no se puede enviar. Un material sin ticket aprobado ni autorización no entra. */
 /* Antes de sellar un PDF se vuelve a pedir el contexto al servidor: devuelve las órdenes cuyo importe de materiales ha cambiado. Lanza error si no llega. */
 async function repCtxReload(ids){ const a=await rpc('amj_admin_informe_ordenes',{}); if(!Array.isArray(a)) throw new Error('respuesta incompleta del servidor'); const N={}; a.forEach(x=>N[x.id]=x);
   const f=x=>JSON.stringify(x&&x.mat_informe||null); if(ids.some(id=>!N[id]||!N[id].mat_informe)) throw new Error('falta el importe de materiales de alguna orden'); const cambian=ids.filter(id=>f(CTX&&CTX[id])!==f(N[id])); CTX=N; return cambian }
-function repMat(o){ const x=CTX&&CTX[o.id], mi=x&&x.mat_informe; if(!mi||!(Number(mi.total)>0)) return []; const D=MAT[o.id]||[], n=v=>v==null?null:Number(v);
-  return [{description:D.map(m=>(m.description||'—')+(Number(m.quantity||1)!==1?' × '+Number(m.quantity):'')).sort().join('; ')||'Materiales',quantity:1,subtotal:n(mi.base),iva:n(mi.iva),total:Number(mi.total),fuente:mi.fuente}] }
+function repMat(o){ const x=CTX&&CTX[o.id], mi=x&&x.mat_informe; if(!mi||mi.fuente==='pendiente'||mi.fuente==='sin_materiales') return [];
+  const b=Math.round(Number(mi.base_cobro||0)*100)/100; if(!(b>0)) return []; const iva=Math.round(b*21)/100, D=MAT[o.id]||[];
+  return [{description:D.map(m=>(m.description||'—')+(Number(m.quantity||1)!==1?' × '+Number(m.quantity):'')).sort().join('; ')||'Materiales',quantity:1,subtotal:b,iva:iva,total:Math.round((b+iva)*100)/100,fuente:mi.fuente}] }
 const repMatListo=L=>!!CTX&&L.every(o=>CTX[o.id]&&CTX[o.id].mat_informe);
 function repMatCheck(L){ const box=el('div','repmsg repmat');
   if(!repMatListo(L)){ if(!L.some(o=>(MAT[o.id]||[]).length)&&CTX!==null) return null; box.textContent=CTX===undefined?'Materiales: comprobando importes…':'Materiales: el servidor no ha dado el importe de materiales de todas las órdenes. El informe no muestra materiales y no se puede enviar.'; return box }
   const conM=L.filter(o=>(MAT[o.id]||[]).length||repMat(o).length); if(!conM.length) return null;
   const F={ticket:'ticket aprobado',autorizado:'autorizado por AMJ sin ticket',pendiente:'sin ticket aprobado ni autorización'}, filas=[];
-  conM.forEach(o=>{ const decl=(MAT[o.id]||[]).reduce((a,m)=>a+Number(m.total||0),0), mi=CTX[o.id].mat_informe, cli=Number(mi.total||0);
+  conM.forEach(o=>{ const decl=(MAT[o.id]||[]).reduce((a,m)=>a+Number(m.total||0),0), mi=CTX[o.id].mat_informe, R=repMat(o), cli=R.length?Number(R[0].total):0;
     if(!(cli>0)) filas.push('AMJ-'+o.ref+': declarado '+eur2(decl)+' · '+(F[mi.fuente]||mi.fuente)+' · NO entra en el informe');
     else if(Math.abs(decl-cli)>=0.01) filas.push('AMJ-'+o.ref+': en el informe '+eur2(cli)+' ('+(F[mi.fuente]||mi.fuente)+') · declarado por el técnico '+eur2(decl)) });
-  box.append(el('b',null,'Materiales (este aviso no sale en el informe): '),document.createTextNode('el informe muestra el importe del ticket aprobado o, sin ticket, el autorizado por AMJ.'+(filas.length?' Diferencias con lo declarado:':' Coincide con lo declarado en todas las órdenes.')));
+  box.append(el('b',null,'Materiales (este aviso no sale en el informe): '),document.createTextNode('al cliente se le cobra la base del ticket aprobado o, sin ticket, la de lo autorizado por AMJ, más el 21 % de IVA.'+(filas.length?' Diferencias con lo declarado por el técnico:':' Coincide con lo declarado en todas las órdenes.')));
   if(filas.length){ const ul=el('ul'); filas.forEach(f=>ul.append(el('li',null,f))); box.append(ul) } else box.classList.add('ok'); return box }
 const eur2=v=>Number(v||0).toLocaleString('es-ES',{minimumFractionDigits:2,maximumFractionDigits:2})+' €';
 /* ---------- datos ---------- */
@@ -720,7 +722,7 @@ const SECS={
    if(WK){ /* resumen */
      const vis=new Set(L.filter(o=>repInm(o)&&o.sa).map(o=>repInm(o)+'|'+dayOf(o.sa))).size;
      const box=el('div','repkp'); const k=(v,t)=>{ const d=el('div'); d.append(el('b',null,v),el('span',null,t)); box.append(d) };
-     k(String(L.length),'órdenes terminadas'); k(String(vis),'visitas (piso + día)'); k(loaded?eur2(matTot):'…','materiales con IVA');
+     k(String(L.length),'órdenes terminadas'); k(String(vis),'visitas (piso + día)'); k(loaded?eur2(matTot):'…','materiales declarados por el técnico');
      if(repCl==='HELP'){ const m0=d1.slice(0,8)+'01'; const mv2=new Set(real().filter(o=>repCli(o)==='HELP'&&o.st!=='cancelled'&&o.sa&&dayOf(o.sa)>=m0&&dayOf(o.sa)<=d1&&repInm(o)).map(o=>repInm(o)+'|'+dayOf(o.sa))).size;
        k(mv2+' / 100','cupo del mes consumido al '+fd(d1,{day:'2-digit',month:'2-digit'})); k(String(Math.max(100-mv2,0)),'avisos disponibles') }
      doc.append(box); if(repCl==='HELP') doc.append(el('div','repnote','Cupo: 1 inmueble + día de inicio = 1 aviso (mismo criterio que el control de avisos).')) }
@@ -734,7 +736,7 @@ const SECS={
      tr.append(el('td','b','AMJ-'+o.ref),el('td',null,clName(repCli(o))),el('td','b',o.piso||o.ad||'—'),r); bd.append(tr) });
    tb.append(bd); doc.append(tb);
    /* materiales (semanal) */
-   if(WK){ doc.append(el('h3','reph3','Materiales por orden'));
+   if(WK){ doc.append(el('h3','reph3','Materiales declarados por el técnico en la app'));
      const mt=el('table','reptb mat'), mh=el('tr'); ['Orden','Material','Cant.','Precio unid.','Base','IVA','Total'].forEach(h=>mh.append(el('th',null,h))); const mth=el('thead'); mth.append(mh); mt.append(mth); const mb=el('tbody');
      const withM=L.filter(o=>(MAT[o.id]||[]).length);
      if(!loaded){ const tr=el('tr'),td=el('td','empty','Cargando materiales…'); td.colSpan=7; tr.append(td); mb.append(tr) }
