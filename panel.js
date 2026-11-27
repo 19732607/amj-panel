@@ -473,6 +473,7 @@ function computeTags(){
   });
 }
 function ago(s){ const m=Math.round((Date.now()-new Date(s))/60000); return m<60?m+' min':(m<1440?Math.floor(m/60)+' h':Math.floor(m/1440)+' días') }
+let VIG=null; /* avisos abiertos de la vigilancia del servidor (amj_admin_vigilancia); null = no se ha podido leer */
 async function load(){
   if(loading||document.hidden) return; loading=true;
   try{
@@ -488,6 +489,7 @@ async function load(){
     prevRev={}; fresh.forEach(o=>prevRev[o.id]=o.rev); O=fresh; computeTags();
     try{ T=await rpc('amj_admin_technicians',{}) }catch(e){ if(e.message==='ACCESS_DENIED') throw e }
     try{ M=await rpc('amj_admin_materials_pending',{}) }catch(e){ if(e.message==='ACCESS_DENIED') throw e }
+    try{ VIG=await rpc('amj_admin_vigilancia',{}) }catch(e){ if(e.message==='ACCESS_DENIED') throw e; VIG=null }
     try{ RV=await rpc('amj_admin_reviews',{}) }catch(e){ if(e.message==='ACCESS_DENIED') throw e }
     if(sec==='clientes'||CP===null){ try{ CP=await rpc('amj_client_properties',{}) }catch(e){ if(e.message==='ACCESS_DENIED') throw e } }
     if(sec==='pagos'||P===null){ try{ P=await rpc('amj_admin_payouts',{}) }catch(e){ if(e.message==='ACCESS_DENIED') throw e } }
@@ -792,12 +794,14 @@ const SECS={
    const by={}; A.forEach(o=>o.tags.filter(t=>t[0]!=='test').forEach(t=>{ const k=t[0]; (by[k]=by[k]||[]).push([o,t[1]]) }));
    const names={wait:'Sin técnico o rechazadas',long:'Horas largas',piso:'Varias órdenes en un piso el mismo día',dup:'Duplicadas'};
    const out=[kpis(Object.keys(names).map(k=>[(by[k]||[]).length,names[k].toLowerCase()])),src('Avisos calculados con las órdenes reales cargadas. No hay avisos por la hora de la cita (la hora es orientativa).')];
+   /* 27/11/2026 · la vigilancia del servidor (asignaciones sin aceptar, borradores de factura parados, etc.) se ve aquí: el correo está apagado por decisión de Antonio */
+   out.push(Array.isArray(VIG)?card('Vigilancia del servidor',['Desde','Aviso'],VIG.map(a=>[fmtD(a.desde),a.detalle||a.clave]),'El servidor no tiene avisos abiertos.'):card('Vigilancia del servidor',['Aviso'],[],'No se ha podido leer la vigilancia del servidor. Recarga la página.'));
    Object.keys(names).forEach(k=>{ if(by[k]) out.push(card(names[k],['Orden','Trabajo','Técnico','Aviso'],by[k].map(([o,l])=>({cells:['AMJ-'+o.ref+' · '+clName(o.cl),o.work,o.tc||'Sin asignar',l],onclick:()=>openDr(o)})))) });
-   if(!A.length) out.push(card('Alertas',['Orden'],[],'No hay alertas ahora mismo.'));
+   if(!A.length) out.push(card('Alertas de órdenes',['Orden'],[],'No hay alertas de órdenes ahora mismo.'));
    return out }]
 };
 function renderSec(){
-  const n=real().filter(o=>o.st!=='cancelled'&&o.tags.some(t=>t[0]!=='test')).length; $('alertn').textContent=n?String(n):'';
+  const n=real().filter(o=>o.st!=='cancelled'&&o.tags.some(t=>t[0]!=='test')).length+(Array.isArray(VIG)?VIG.length:0); $('alertn').textContent=n?String(n):'';
   const isO=sec==='ordenes'; $('sec-ordenes').hidden=!isO; $('sec-other').hidden=isO; if(isO) return;
   const [title,fn]=SECS[sec]; $('otitle').textContent=title; const b=$('obody'); b.innerHTML='';
   if(!lastOk){ b.append(el('div','empty','Cargando datos del servidor…')); return }
