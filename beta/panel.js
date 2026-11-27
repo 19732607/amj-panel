@@ -135,7 +135,8 @@ const repInm=o=>{ const x=CTX&&CTX[o.id]; return x&&x.inmueble!=null&&String(x.i
 const repCuentaInmuebles=ordenes=>new Set(ordenes.map(repInm).filter(Boolean)).size;
 const repGrupoInmueble=o=>repInm(o)||'Sin inmueble identificado';
 /* Cliente de una orden EN LOS INFORMES: el de su ficha en el servidor (CTX.cliente); el prefijo de la descripción solo mientras el contexto no ha llegado. */
-const repCli=o=>{ const x=CTX&&CTX[o.id]; return x&&x.cliente?({HELPHOUSING:'HELP'})[x.cliente]||x.cliente:o.cl };
+/* Orden «fuera de cliente» (decisión de Antonio, 27/11/2026: AMJ-423): no se asigna a ningún cliente, así no sale en sus informes. El pago al técnico no cambia. */
+const repCli=o=>{ const x=CTX&&CTX[o.id]; if(x&&x.fuera_cliente) return null; return x&&x.cliente?({HELPHOUSING:'HELP'})[x.cliente]||x.cliente:o.cl };
 /* ¿Cancelada en esa fecha? Con historial, por el evento de cancelación hasta ese día; sin historial, por el estado de hoy. */
 const repNoCancAl=(o,d)=>{ const e=repEstadoAl(o,d); return e?e!=='cancelada':!['cancelled','canceled','rejected'].includes(o.st) };
 /* Cierre vigente en la fecha de corte: {t} si la orden estaba cerrada ese día; null si no. Sin historial del servidor, el cierre de hoy. */
@@ -1124,7 +1125,7 @@ const SECS={
    const ctl=el('div','repctl');
    const seg=el('div','seg'); [['dia','Diario'],['sem','Semanal'],['qui','Quincenal'],['mes','Mensual'],['tot','Total']].forEach(([k,t])=>{ const on=k!=='tot'; const b=el('button',repPer===k?'on':null,t+(on?'':' · por definir')); b.disabled=!on; b.onclick=()=>{ repPer=k; renderSec() }; seg.append(b) });
    const scl=el('select'); scl.append(new Option('Todos los clientes',''));
-   [...new Set(real().map(o=>repCli(o)))].sort((x,y)=>clName(x).localeCompare(clName(y))).forEach(c=>scl.append(new Option(clName(c),c))); scl.value=repCl; scl.onchange=()=>{ repCl=scl.value; renderSec() };
+   [...new Set(real().map(o=>repCli(o)).filter(Boolean))].sort((x,y)=>clName(x).localeCompare(clName(y))).forEach(c=>scl.append(new Option(clName(c),c))); scl.value=repCl; scl.onchange=()=>{ repCl=scl.value; renderSec() };
    const dIn=el('input'); dIn.type='date'; dIn.value=repDay; dIn.max=todayStr(); dIn.onchange=()=>{ if(dIn.value){ repDay=dIn.value; renderSec() } };
    const addD=(d,n)=>{ const x=new Date(d+'T12:00:00'); x.setDate(x.getDate()+n); return x.toLocaleDateString('sv-SE') };
    const mv=n=>{ let v=addD(repDay,n); if(MS){ const a=repDay.slice(0,8); v=n<0?addD(a+'01',-1).slice(0,8)+'01':addD(a+'28',4).slice(0,8)+'01'; if(v.slice(0,7)===todayStr().slice(0,7)) v=todayStr() } if(QN){ const dd=+repDay.slice(8), a=repDay.slice(0,8); v=n<0?addD(a+(dd<=15?'01':'16'),-1):(dd<=15?a+'16':addD(a+'28',4).slice(0,8)+'01') } if(v<=todayStr()||n<0){ repDay=v>todayStr()?todayStr():v; renderSec() } };
