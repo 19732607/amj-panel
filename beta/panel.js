@@ -682,7 +682,13 @@ const ING_ERR={
   FACTURA_YA_ANOTADA:'Ese número de factura ya está anotado en otro extra.',
   ORDEN_NO_ENCONTRADA:'No existe ninguna orden con ese número.',
   ORDEN_DE_PRUEBA:'Esa orden es de prueba: no admite ingresos.',
-  ANULACION_NO_VALIDA:'Escribe el motivo de la anulación (al menos 5 letras).'};
+  ANULACION_NO_VALIDA:'Escribe el motivo de la anulación (al menos 5 letras).',
+  COBRO_NO_VALIDO:'Revisa el importe cobrado (mayor que cero, dos decimales) y la fecha, que no puede ser futura.',
+  COBRO_SUPERA_LO_FACTURADO:'Ese cobro supera lo que queda por cobrar de esa factura o cuota.',
+  COBRO_ANULADO:'Ese cobro está anulado y ya no se puede cambiar.',
+  COBRO_NO_ENCONTRADO:'No encuentro ese cobro. Recarga el panel.',
+  INGRESO_CON_COBROS:'Tiene cobros anotados. Anula antes sus cobros.',
+  IMPORTE_MENOR_QUE_LO_COBRADO:'El importe quedaría por debajo de lo que ya está cobrado.'};
 const ingErrTxt=t=>{ for(const k in ING_ERR) if(t.indexOf(k)>=0) return ING_ERR[k]; return 'El servidor no lo ha aceptado. No se ha guardado nada.' };
 const MESES=['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
 const mesTxt=m=>MESES[Number(m.slice(5,7))-1]+' '+m.slice(0,4);
@@ -710,10 +716,28 @@ function ingCalc(){ const hoyM=todayStr().slice(0,7), desdeM=mesMas(hoyM,-11);
   const meses=Object.values(porMes).map(g=>({...g,entra:g.fijos+g.extras,queda:g.fijos+g.extras-g.mo})).sort((a,b)=>b.mes.localeCompare(a.mes));
   lista.sort((a,b)=>b.mes.localeCompare(a.mes)||a.cliente.localeCompare(b.cliente));
   return {hoyM,meses,lista,avisos,F,X} }
+/* COBROS (27/11): lo facturado y lo cobrado viven en tablas distintas. Un cobro es dinero que entra, IVA incluido. */
+const ingSuma=a=>(a||[]).reduce((t,c)=>t+Number(c.importe),0);
+const ingR2=v=>Math.round(v*100)/100;
+function ingDeuda(R){ const porF={}, porX={}; (ING.cobros||[]).filter(c=>!c.anulado_en).forEach(c=>{
+    if(c.tipo==='fijo'){ const k=c.fijo_id+'|'+String(c.mes).slice(0,7); (porF[k]=porF[k]||[]).push(c) } else (porX[c.extra_id]=porX[c.extra_id]||[]).push(c) });
+  const ovr={}; (ING.meses||[]).forEach(m=>{ ovr[m.fijo_id+'|'+String(m.mes).slice(0,7)]=m });
+  const lista=[], tope=mesMas(R.hoyM,-11);
+  R.F.forEach(f=>{ let m=f.desde.slice(0,7); if(m<tope) m=tope;
+    for(;m<=R.hoyM&&(!f.hasta||m<=f.hasta.slice(0,7));m=mesMas(m,1)){ const r=ingFijoMes(f,m,ovr); if(!r) continue;
+      const tot=ingR2(r.imp*(1+Number(f.iva_pct)/100)), cob=ingR2(ingSuma(porF[f.id+'|'+m]));
+      lista.push({clase:'fijo',orden:m+'-00',cuando:mesTxt(m),cliente:f.cliente,concepto:f.concepto,doc:r.motivo||'—',tot,cob,pend:ingR2(tot-cob),ref:f.id,mes:m,titulo:f.cliente+' · '+f.concepto+' · '+mesTxt(m)}) } });
+  R.X.forEach(x=>{ const tot=ingR2(Number(x.importe)*(1+Number(x.iva_pct)/100)), cob=ingR2(ingSuma(porX[x.id]));
+    lista.push({clase:'extra',orden:String(x.fecha),cuando:fechaTxt(x.fecha),cliente:x.cliente,concepto:x.concepto,doc:x.numero_factura||'—',tot,cob,pend:ingR2(tot-cob),ref:x.id,mes:null,titulo:x.cliente+' · '+(x.numero_factura?'factura '+x.numero_factura:x.concepto)}) });
+  lista.sort((a,b)=>b.orden.localeCompare(a.orden)||a.cliente.localeCompare(b.cliente));
+  const sum=cl=>lista.filter(d=>!cl||d.clase===cl).reduce((a,d)=>({tot:a.tot+d.tot,cob:a.cob+d.cob,pend:a.pend+d.pend}),{tot:0,cob:0,pend:0});
+  return {lista,fijo:sum('fijo'),extra:sum('extra'),todo:sum('')} }
+const ingEstadoCobro=d=>d.pend<=0.004?badge('Cobrado','ok'):badge(d.cob>0.004?'Cobro parcial':'Pendiente de cobro','s-pending');
 function ingAbrir(tipo,dato){ ingMsg=null;
   if(tipo==='fijo') ingForm={tipo,id:dato?dato.id:nuevoId(),nuevo:!dato,cliente:dato?dato.cliente:'',concepto:dato?dato.concepto:'Cuota mensual',importe:dato?String(dato.importe_mensual):'',iva:dato?String(Number(dato.iva_pct)):'21',desde:dato?dato.desde:'',hasta:dato&&dato.hasta?dato.hasta:'',notas:dato&&dato.notas?dato.notas:'',error:''};
   else if(tipo==='extra') ingForm={tipo,id:dato?dato.id:nuevoId(),nuevo:!dato,cliente:dato?dato.cliente:'',fecha:dato?dato.fecha:hoyISO(),concepto:dato?dato.concepto:'',importe:dato?String(dato.importe):'',iva:dato?String(Number(dato.iva_pct)):'21',orden:dato&&dato.orden_ref?String(dato.orden_ref):'',factura:dato&&dato.numero_factura?dato.numero_factura:'',notas:dato&&dato.notas?dato.notas:'',error:''};
   else if(tipo==='mes') ingForm={tipo,f:dato.f,mes:dato.m||todayStr().slice(0,7),importe:dato.imp!=null?String(dato.imp):'',motivo:'',error:''};
+  else if(tipo==='cobro') ingForm={tipo,id:nuevoId(),que:dato.clase,ref:dato.ref,mes:dato.mes,titulo:dato.titulo,total:dato.tot,pend:dato.pend,importe:dato.pend.toFixed(2),fecha:'',referencia:dato.doc&&dato.doc!=='—'?(dato.clase==='extra'?'Factura '+dato.doc:dato.doc):'',notas:'',error:''};
   else ingForm={tipo:'anular',que:dato.que,id:dato.id,titulo:dato.titulo,motivo:'',error:''};
   renderSec(); const b=$('obody'); if(b&&b.scrollIntoView) b.scrollIntoView({block:'start'}) }
 function ingCerrar(){ ingForm=null; renderSec() }
@@ -737,6 +761,11 @@ async function ingEnviar(){ const f=ingForm; let nombre, args, hecho;
     if(f.motivo.trim().length<3) return ingFallo('Escribe el motivo, por ejemplo «mes partido».');
     nombre='amj_admin_ingreso_fijo_mes'; args={p_fijo:f.f.id,p_mes:f.mes+'-01',p_importe:imp,p_motivo:f.motivo.trim()};
     hecho=f.f.cliente+' · '+f.f.concepto+': '+mesTxt(f.mes)+' queda en '+eur(imp)+'.' }
+  else if(f.tipo==='cobro'){
+    if(!(imp>0)) return ingFallo('Escribe lo cobrado, IVA incluido.'); if(imp>f.pend+0.004) return ingFallo('No puedes anotar más de lo que queda por cobrar: '+eur(f.pend)+'.');
+    if(f.fecha&&f.fecha>hoyISO()) return ingFallo('La fecha del cobro no puede ser futura.');
+    nombre='amj_admin_ingreso_cobro_guardar'; args={p_id:f.id,p_tipo:f.que,p_ref:f.ref,p_mes:f.mes?f.mes+'-01':null,p_importe:imp,p_fecha:f.fecha||null,p_referencia:f.referencia.trim()||null,p_notas:f.notas.trim()||null};
+    hecho='Cobro anotado: '+eur(imp)+' · '+f.titulo+'.' }
   else { if(f.motivo.trim().length<5) return ingFallo('Escribe el motivo de la anulación.');
     nombre='amj_admin_ingreso_anular'; args={p_tipo:f.que,p_id:f.id,p_motivo:f.motivo.trim()}; hecho='Anulado: '+f.titulo+'.' }
   ingBusy=true; f.error=''; renderSec();
@@ -767,6 +796,10 @@ function ingPanel(clientes){ const f=ingForm; if(!f) return null; const c=el('di
   else if(f.tipo==='mes'){ c.append(el('h3',null,'Importe real de un mes · '+f.f.cliente+' · '+f.f.concepto));
     c.append(src('Para un mes que no se facturó por la cuota entera ('+eur(f.f.importe_mensual)+'): mes partido, descuento o mes sin facturar. Escribe lo que facturaste de verdad, sin IVA.'));
     fila.append(campo('Mes',payEntrada(f.mes,v=>{f.mes=v},'month')),campo('Importe real de ese mes, sin IVA',payEntrada(f.importe,v=>{f.importe=v},'text',{inputMode:'decimal'})),campo('Motivo',payEntrada(f.motivo,v=>{f.motivo=v},'text',{maxLength:500,placeholder:'Mes partido, descuento…'}))) }
+  else if(f.tipo==='cobro'){ c.append(el('h3',null,'Anotar cobro · '+f.titulo));
+    c.append(src('Lo que ha entrado en el banco, IVA INCLUIDO. Facturado: '+eur(f.total)+' · queda por cobrar: '+eur(f.pend)+'. Si te pagan en dos veces, anota cada cobro por separado. La fecha puede quedar vacía si ahora no la sabes.'));
+    fila.append(campo('Cobrado, IVA incluido',payEntrada(f.importe,v=>{f.importe=v},'text',{inputMode:'decimal'})),campo('Fecha del cobro (opcional)',payEntrada(f.fecha,v=>{f.fecha=v},'date')),
+      campo('Referencia (factura, transferencia…)',payEntrada(f.referencia,v=>{f.referencia=v},'text',{maxLength:120})),campo('Notas',payEntrada(f.notas,v=>{f.notas=v},'text',{maxLength:1000}))) }
   else { c.append(el('h3',null,'Anular · '+f.titulo));
     c.append(src('No se borra: deja de contar en los totales y queda en el historial como anulado, con tu motivo.'));
     fila.append(campo('Motivo de la anulación',payEntrada(f.motivo,v=>{f.motivo=v},'text',{maxLength:500}))) }
@@ -1014,6 +1047,14 @@ const SECS={
    if(ingMsg){ const a=el('div','card'), t=el('div',null,ingMsg); t.style.cssText='font-weight:600'; a.append(t); out.push(a) }
    const form=ingPanel(clientes); if(form) out.push(form);
    else { const bar=el('div','card'), w=el('div'); w.style.cssText='display:flex;gap:10px;flex-wrap:wrap'; w.append(ingBoton('＋ Añadir cuota fija',()=>ingAbrir('fijo'),true),ingBoton('＋ Añadir ingreso extra',()=>ingAbrir('extra'),true)); bar.append(w); out.push(bar) }
+   const D=ingDeuda(R);
+   out.push(kpis([[eur(D.todo.tot),'facturado, IVA incluido'],[eur(D.todo.cob),'cobrado'],[eur(D.todo.pend),'pendiente de cobro'],[D.lista.filter(d=>d.pend>0.004).length,'cuotas o facturas por cobrar']]));
+   out.push(card('Cobrado y pendiente',['','Facturado con IVA','Cobrado','Pendiente de cobro'],
+     [['Cuotas fijas de contrato',eur(D.fijo.tot),eur(D.fijo.cob),eur(D.fijo.pend)],['Trabajos extra',eur(D.extra.tot),eur(D.extra.cob),eur(D.extra.pend)],
+      {cells:['Total',eur(D.todo.tot),eur(D.todo.cob),eur(D.todo.pend)]}],'Todavía no hay nada facturado.'));
+   out.push(card('Detalle: qué está cobrado y qué falta',['Mes o fecha','Tipo','Cliente','Concepto','Factura','Facturado con IVA','Cobrado','Pendiente','Estado',''],
+     D.lista.map(d=>[d.cuando,d.clase==='fijo'?'Cuota fija':'Extra',d.cliente,d.concepto,d.doc,eur(d.tot),eur(d.cob),eur(d.pend),ingEstadoCobro(d),
+       d.pend>0.004?ingMini('Anotar cobro',()=>ingAbrir('cobro',d)):el('span')]),'Añade una cuota o un extra y aquí verás si está cobrado.'));
    if(R.avisos.length) out.push(card('Meses incompletos sin ajustar',['Cliente','Cuota','Mes','Periodo real','Cuenta ahora',''],
      R.avisos.map(a=>[a.f.cliente,a.f.concepto,mesTxt(a.m),(a.m===a.f.desde.slice(0,7)?'desde el '+fechaTxt(a.f.desde):'')+(a.f.hasta&&a.m===a.f.hasta.slice(0,7)?' hasta el '+fechaTxt(a.f.hasta):''),eur(a.imp)+' (cuota entera)',ingMini('Poner el importe real',()=>ingAbrir('mes',{f:a.f,m:a.m,imp:a.imp}))])));
    out.push(card('Resultado por mes',['Mes','Fijos','Extras','Entra','Mano de obra técnicos','Queda','Materiales (aparte)','Órdenes'],
@@ -1025,10 +1066,16 @@ const SECS={
        return [f.cliente,f.concepto,eur(f.importe_mensual),Number(f.iva_pct)+' %',eur(Number(f.importe_mensual)*(1+Number(f.iva_pct)/100)),fechaTxt(f.desde),f.hasta?fechaTxt(f.hasta):'vigente',
          an?badge('Anulada','no'):badge(f.hasta&&f.hasta<todayStr()?'Terminada':'Vigente','ok'),an?el('span',null,f.anulado_motivo||''):acc] }),'Aún no hay ninguna cuota anotada. Pulsa «Añadir cuota fija».'));
    const aj=(ING.meses||[]); if(aj.length){ const porId={}; (ING.fijos||[]).forEach(f=>porId[f.id]=f);
-     out.push(card('Meses con importe ajustado',['Cliente','Cuota','Mes','Importe real','Motivo'],aj.map(m=>{ const f=porId[m.fijo_id]||{cliente:'—',concepto:'—'}; return [f.cliente,f.concepto,mesTxt(String(m.mes).slice(0,7)),eur(m.importe),m.motivo] }))) }
+     out.push(card('Meses con importe anotado (factura o ajuste)',['Cliente','Cuota','Mes','Importe real','Motivo'],aj.map(m=>{ const f=porId[m.fijo_id]||{cliente:'—',concepto:'—'}; return [f.cliente,f.concepto,mesTxt(String(m.mes).slice(0,7)),eur(m.importe),m.motivo] }))) }
    out.push(card('Ingresos extra',['Fecha','Cliente','Trabajo facturado','Sin IVA','IVA','Con IVA','Orden','Factura','Estado',''],
      (ING.extras||[]).map(x=>{ const an=!!x.anulado_en, acc=el('span'); if(!an) acc.append(ingMini('Corregir',()=>ingAbrir('extra',x)),ingMini('Anular',()=>ingAbrir('anular',{que:'extra',id:x.id,titulo:x.cliente+' · '+x.concepto+' · '+eur(x.importe)})));
        return [fechaTxt(x.fecha),x.cliente,x.concepto,eur(x.importe),Number(x.iva_pct)+' %',eur(Number(x.importe)*(1+Number(x.iva_pct)/100)),x.orden_ref?'AMJ-'+x.orden_ref:'—',x.numero_factura||'—',an?badge('Anulado','no'):badge('Cuenta','ok'),an?el('span',null,x.anulado_motivo||''):acc] }),'Aún no hay ningún extra anotado. Pulsa «Añadir ingreso extra».'));
+   const cobs=(ING.cobros||[]); if(cobs.length){ const pF={}, pX={}; (ING.fijos||[]).forEach(f=>pF[f.id]=f); (ING.extras||[]).forEach(x=>pX[x.id]=x);
+     out.push(card('Cobros anotados',['Fecha del cobro','Importe','De qué','Referencia','Notas','Estado',''],
+       cobs.slice().reverse().map(c=>{ const an=!!c.anulado_en, f=pF[c.fijo_id], x=pX[c.extra_id];
+         const de=c.tipo==='fijo'?(f?f.cliente+' · '+f.concepto+' · '+mesTxt(String(c.mes).slice(0,7)):'—'):(x?x.cliente+' · '+(x.numero_factura?'factura '+x.numero_factura:x.concepto):'—');
+         return [c.fecha?fechaTxt(c.fecha):'Sin anotar',eur(c.importe),de,c.referencia||'—',c.notas||'—',an?badge('Anulado','no'):badge('Cuenta','ok'),
+           an?el('span',null,c.anulado_motivo||''):ingMini('Anular cobro',()=>ingAbrir('anular',{que:'cobro',id:c.id,titulo:'cobro de '+eur(c.importe)+' · '+de}))] }))) }
    return out }],
  pagos:['Pagos a técnicos',()=>{
    if(!P) return [el('div','empty','Cargando pagos…')];
