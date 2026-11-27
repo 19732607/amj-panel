@@ -41,7 +41,7 @@ const exigeEntorno=()=>{ if(!ENT) throw new Error(ENT_ERR||'Entorno todavía sin
 const sesionDeEnsayoValida=tok=>{ if(!ENSAYO||(ENT&&ENT.dobles)) return true; try{ return JSON.parse(atob(tok.split('.')[1].replace(/-/g,'+').replace(/_/g,'/'))).iss==='https://'+REF_PRUEBAS+'.supabase.co/auth/v1' }catch(e){ return false } };
 const TZ='Europe/Madrid', POLL=15000, PAGE=100, MAXPAGES=200, STORE='amj.panel.session'+(ENSAYO?'.ensayo':'');
 const $=id=>document.getElementById(id);
-let session=null, WARN='', TEST=new Set(), T=null, M=null, P=null, ING=null, RH=null, payT='', sec='ordenes', kpiDays='all', kpiFrom='', kpiTo='', RV=null, CP=null, repCl='', repDay='', repPer='dia', repSel=new Set(), repSelW=new Set(), repView=false, repAuto=false, repMsg='', O=[], prevRev={}, view='all', lastOk=0, timer=null, loading=false;
+let session=null, WARN='', TEST=new Set(), T=null, M=null, P=null, ING=null, RH=null, payT='', payRep='', sec='ordenes', kpiDays='all', kpiFrom='', kpiTo='', RV=null, CP=null, repCl='', repDay='', repPer='dia', repSel=new Set(), repSelW=new Set(), repView=false, repAuto=false, repMsg='', O=[], prevRev={}, view='all', lastOk=0, timer=null, loading=false;
 
 /* ---------- sesión ---------- */
 function storage(){ try{ return localStorage.getItem(STORE)?localStorage:sessionStorage }catch(e){ return null } }
@@ -875,6 +875,86 @@ function barChart(title,byT){
     r.append(el('span',null,k),bar,el('span',null,g.r+' resueltas · '+g.a+' activas · '+g.x+' canc. · '+(g.m?dur(g.m):'0 h'))); b.append(r) });
   return c }
 
+/* ---------- Informe de trabajos de un técnico (se arma en el momento con lo que devuelve el servidor) ---------- */
+const payWrap=docs=>{ const w=el('div','repdoc rfw'); docs.forEach(d=>w.append(d)); return w };
+function payInforme(tec,rt){
+  const MESL=['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
+  const MESC=['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
+  const iso=s=>new Date(s).toLocaleDateString('sv-SE',{timeZone:TZ});
+  const dLargo=d=>(+d.slice(8))+' de '+MESL[+d.slice(5,7)-1]+' de '+d.slice(0,4);
+  const dCorto=d=>d.slice(8)+'/'+d.slice(5,7);
+  const r2=v=>Math.round(v*100)/100, bs=v=>r2(v/1.21);
+  const hrs=m=>(m/60).toLocaleString('es-ES',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const H=t=>el('h2','rf-h2',t);
+  const tabla=(heads,filas)=>{ const tb=el('table','rf-tb'), hr=el('tr'); heads.forEach((h,i)=>{ const th=el('th',null,h); if(i) th.style.textAlign='right'; hr.append(th) });
+    const th=el('thead'); th.append(hr); const bd=el('tbody');
+    filas.forEach(f=>{ const cells=f.cells||f, tr=el('tr',f.tot?'tot':null); cells.forEach((c,j)=>tr.append(el('td',j?'r':null,c==null?'—':String(c)))); bd.append(tr) });
+    tb.append(th,bd); return tb };
+  const L=rt.slice().sort((a,b)=>(a.finished_at||'').localeCompare(b.finished_at||'')||a.reference-b.reference);
+  const pen=L.filter(r=>r.pend>0.004), pag=L.filter(r=>r.pend<=0.004);
+  const sum=(a,f)=>a.reduce((x,r)=>x+f(r),0);
+  const mins=sum(L,r=>r.billable_minutes||0), mo=r2(sum(L,r=>r.lt||0)), mat=r2(sum(L,r=>r.mt||0));
+  const penMin=sum(pen,r=>r.billable_minutes||0), penMo=r2(sum(pen,r=>Math.max((r.lt||0)-r.lp,0))), penMat=r2(sum(pen,r=>Math.max((r.mt||0)-r.mp,0)));
+  const pagMo=r2(mo-penMo), pagMat=r2(mat-penMat), pagMin=mins-penMin;
+  const total=r2(mo+mat), pagado=r2(pagMo+pagMat), pendiente=r2(penMo+penMat), fin=!pen.length;
+  const d0=iso(L[0].finished_at), d1=iso(L[L.length-1].finished_at);
+  const periodo=d0.slice(0,7)===d1.slice(0,7)?'Del '+(+d0.slice(8))+' al '+dLargo(d1):'Del '+(+d0.slice(8))+' de '+MESL[+d0.slice(5,7)-1]+' al '+dLargo(d1);
+  const doc=el('div','rf');
+  const top=el('div','rf-top'); const lg=document.querySelector('.brand img'); if(lg){ const im=el('img'); im.src=lg.src; im.alt='AMJ'; top.append(im) }
+  const tr0=el('div','rf-tr'); tr0.append(el('b',null,'A.M.J. MAINTENANCE SERVICES CORP. S.L.'),el('span',null,'Informe emitido el '+dLargo(iso(Date.now()))));
+  top.append(tr0); doc.append(top);
+  doc.append(el('h1','rf-h1','Informe de trabajos'+(fin?' · finalizado':'')),el('div','rf-sub',tec+' · '+periodo));
+  const kp=el('div','rf-kp rf-kpi');
+  [[eur(pagado),'pagado'],[eur(pendiente),fin?'pendiente: todo liquidado':'pendiente de pago'],[eur(total),'generado en el periodo'],[String(L.length),'órdenes cerradas']]
+    .forEach(([v,t])=>{ const k=el('div'); k.append(el('b',null,v),el('span',null,t)); kp.append(k) });
+  doc.append(kp);
+  doc.append(H('Horas, materiales y total'));
+  doc.append(tabla(['Concepto','Horas','Base sin IVA','IVA 21 %','Total'],[
+    ['Mano de obra',hrs(mins),eur(bs(mo)),eur(r2(mo-bs(mo))),eur(mo)],
+    ['Materiales','—',eur(bs(mat)),eur(r2(mat-bs(mat))),eur(mat)],
+    {cells:['Total generado',hrs(mins),eur(bs(total)),eur(r2(total-bs(total))),eur(total)],tot:1},
+    ['Ya pagado',hrs(pagMin),eur(bs(pagado)),eur(r2(pagado-bs(pagado))),eur(pagado)],
+    {cells:['Pendiente de pago',hrs(penMin),eur(bs(pendiente)),eur(r2(pendiente-bs(pendiente))),eur(pendiente)],tot:1}]));
+  doc.append(el('p','rf-nt','La mano de obra se paga por las horas registradas en cada orden a la tarifa del técnico. Los materiales, por la base del ticket más su IVA, sin recargo.'));
+  if(pag.length){ const fp=pag.map(r=>r.last_paid_at).filter(Boolean).sort();
+    doc.append(H('Órdenes ya pagadas'));
+    doc.append(tabla(['Orden','Fecha','Horas','Mano de obra','Materiales','Total'],
+      pag.map(r=>['AMJ-'+r.reference,dCorto(iso(r.finished_at)),hrs(r.billable_minutes||0),eur(r2(r.lt||0)),(r.mt||0)>0.004?eur(r2(r.mt||0)):'—',eur(r2(r.gen))])
+        .concat([{cells:['Total',pag.length+' órdenes',hrs(pagMin),eur(pagMo),eur(pagMat),eur(pagado)],tot:1}])));
+    if(fp.length) doc.append(el('p','rf-nt','Liquidadas por transferencia'+(fp[0]===fp[fp.length-1]?' el '+dLargo(iso(fp[0])):' entre el '+dLargo(iso(fp[0]))+' y el '+dLargo(iso(fp[fp.length-1])))+'.')) }
+  if(pen.length){ doc.append(H('Órdenes pendientes de pago'));
+    doc.append(tabla(['Orden','Fecha','Horas','Mano de obra','Materiales','Total'],
+      pen.map(r=>['AMJ-'+r.reference,dCorto(iso(r.finished_at)),hrs(r.billable_minutes||0),eur(r2(Math.max((r.lt||0)-r.lp,0))),(r.mt||0)-r.mp>0.004?eur(r2((r.mt||0)-r.mp)):'—',eur(r2(r.pend))])
+        .concat([{cells:['Total',pen.length+' órdenes',hrs(penMin),eur(penMo),eur(penMat),eur(pendiente)],tot:1}]))) }
+  doc.append(H('Tu progreso'));
+  const sem={}; L.forEach(r=>{ const d=new Date(iso(r.finished_at)+'T12:00:00'); d.setDate(d.getDate()-((d.getDay()+6)%7)); const k=d.toLocaleDateString('sv-SE');
+    const g=sem[k]=sem[k]||{n:0,m:0,mo:0,mat:0}; g.n++; g.m+=r.billable_minutes||0; g.mo+=r.lt||0; g.mat+=r.mt||0 });
+  const claves=Object.keys(sem).sort(); let acum=0; const filasSem=[], barras=[];
+  claves.forEach(k=>{ const g=sem[k]; acum+=g.mo+g.mat;
+    const ini=k<d0?d0:k, f=new Date(k+'T12:00:00'); f.setDate(f.getDate()+6); let finS=f.toLocaleDateString('sv-SE'); if(finS>d1) finS=d1;
+    const etq=(+ini.slice(8))+'–'+(+finS.slice(8))+' '+MESC[+finS.slice(5,7)-1];
+    filasSem.push([etq,String(g.n),hrs(g.m),eur(r2(g.mo)),eur(r2(g.mat)),eur(r2(g.mo+g.mat)),eur(r2(acum))]); barras.push([etq,r2(acum)]) });
+  filasSem.push({cells:['Total',String(L.length),hrs(mins),eur(mo),eur(mat),eur(total),eur(total)],tot:1});
+  doc.append(tabla(['Semana','Órdenes','Horas','Mano de obra','Materiales','Generado','Acumulado'],filasSem));
+  if(barras.length>1){ const mx=Math.max(...barras.map(b=>b[1])), bs2=el('div','rf-bars');
+    barras.forEach(([t,v])=>{ const r=el('div'), b=el('i'), f=el('u'); f.style.width=Math.round(v/mx*100)+'%'; b.append(f); r.append(el('span',null,t),b,el('em',null,eur(v))); bs2.append(r) });
+    doc.append(bs2); doc.append(el('p','rf-nt','Las barras muestran el acumulado: lo que llevas generado desde el primer trabajo del periodo.')) }
+  const sv={}; L.forEach(r=>{ const k=r.service||'Sin clasificar'; const g=sv[k]=sv[k]||{n:0,v:0}; g.n++; g.v+=(r.lt||0)+(r.mt||0) });
+  doc.append(H('Reparto por tipo de trabajo'));
+  doc.append(tabla(['Tipo de trabajo','Órdenes','Generado'],Object.entries(sv).sort((a,b)=>b[1].v-a[1].v).map(([k,g])=>[k,String(g.n),eur(r2(g.v))])
+    .concat([{cells:['Total',String(L.length),eur(total)],tot:1}])));
+  const rv=(RV||[]).filter(r=>r.technician===tec);
+  if(rv.length){ const media=Math.round(rv.reduce((a,r)=>a+Number(r.stars),0)/rv.length*10)/10;
+    doc.append(H('Valoración de tus trabajos'));
+    doc.append(el('p','rf-vl','★'.repeat(Math.round(media))+'☆'.repeat(5-Math.round(media))+'  '+media.toLocaleString('es-ES',{minimumFractionDigits:1,maximumFractionDigits:1})+' de 5 · '+rv.length+' valoraciones registradas')) }
+  const nombre=String(tec).split(' ')[0];
+  doc.append(el('p','rf-mg',fin
+    ? nombre+', en este periodo has cerrado '+L.length+' órdenes y queda todo liquidado: no tienes ningún importe pendiente de cobro. Gracias por tu trabajo; contamos contigo para los próximos encargos.'
+    : nombre+', en este periodo has cerrado '+L.length+' órdenes. Tu trabajo nos permite responder con la rapidez que se nos pide. Esperamos que recibas más encargos y que tus ingresos con AMJ sigan creciendo en los próximos meses.'));
+  const ft=el('div','rf-ft'); ft.append(el('span',null,'A.M.J. MAINTENANCE SERVICES CORP. S.L. · ASSET MAINTENANCE JUST IN TIME'),el('span',null,'Datos del sistema de AMJ en el momento de emitir el informe'));
+  doc.append(ft);
+  return doc }
+
 /* ---------- secciones (solo datos reales del servidor; nada inventado) ---------- */
 const real=()=>O.filter(o=>!o.test);
 const daysAgo=s=>s?(Date.now()-new Date(s))/864e5:Infinity;
@@ -965,11 +1045,20 @@ const SECS={
    const detail=rows.filter(r=>!payT||r.technician===payT);
    const avisos=[]; if(payMsg) { const a=el('div','card'); const t=el('div',null,payMsg.txt); t.style.cssText='font-weight:600'; a.append(t); avisos.push(a) }
    const formulario=payPanel(); if(formulario) avisos.push(formulario);
+   if(payRep){ const rt=rows.filter(r=>r.technician===payRep);
+     const volver=el('button','out','◀ Volver a pagos'); volver.style.marginLeft='0'; volver.onclick=()=>{ payRep=''; renderSec() };
+     const imprimir=el('button','out','🖨 Imprimir / PDF'); imprimir.onclick=()=>window.print();
+     const barra=el('div','repbar'); barra.append(volver,imprimir);
+     if(!rt.length) return [barra, el('div','empty','Este técnico no tiene órdenes terminadas.')];
+     return [barra, src('Informe del técnico, armado en el momento con los datos del servidor. Nada se guarda ni se duplica: cada vez que se abre, sale al día.'),
+       payWrap([payInforme(payRep,rt)])] }
    return [kpis([[eur(tot.gen),'generado (IVA incluido)'],[eur(tot.paid),'pagado'],[eur(tot.pend),'pendiente de pagar'],[rows.filter(r=>r.pend>0.004).length,'órdenes con importe pendiente']]),
      ...avisos,
      src('Órdenes terminadas (sin pruebas). Mano de obra = horas de la orden, ya con los ajustes de AMJ, por la tarifa del técnico con IVA. Materiales = el importe validado del ticket, IVA incluido, sin sumar otro 21 % (regla desde el 21/11/2026; las órdenes anteriores conservan su importe). Pagado = pagos registrados en el servidor (coinciden con las órdenes marcadas como PAGADO en Airtable). Pendiente = el que calcula el servidor: las órdenes facturadas por el técnico fuera de la app quedan a cero.'),
-     card('Por técnico',['Técnico','Órdenes','Generado','Pagado','Pendiente','Factura externa','Materiales por revisar','Último pago'],
-       Object.entries(byT).sort((a,b)=>b[1].pend-a[1].pend).map(([k,g])=>({cells:[k,g.n,eur(g.gen),eur(g.paid),eur(g.pend),g.ext||'—',g.mpend||'—',g.last?fmtD(g.last):'—'],onclick:()=>{payT=k;renderSec()}}))),
+     card('Por técnico',['Técnico','Órdenes','Generado','Pagado','Pendiente','Factura externa','Materiales por revisar','Último pago','Informe'],
+       Object.entries(byT).sort((a,b)=>b[1].pend-a[1].pend).map(([k,g])=>({cells:[k,g.n,eur(g.gen),eur(g.paid),eur(g.pend),g.ext||'—',g.mpend||'—',g.last?fmtD(g.last):'—',
+         (()=>{ const b=el('button',null,'Informe de trabajos'); b.style.cssText='border:1px solid var(--line);border-radius:8px;padding:6px 10px;font:inherit;font-size:12.5px;background:#fff;cursor:pointer;white-space:nowrap';
+           b.onclick=ev=>{ ev.stopPropagation(); payRep=k; renderSec() }; return b })()],onclick:()=>{payT=k;renderSec()}}))),
      sel,
      card('Detalle por orden'+(payT?' · '+payT:''),['Fecha','Orden','Técnico','Horas','Mano de obra','Materiales','Total','Pagado','Estado','Transferencia'],
        detail.map(r=>[fmtD(r.finished_at),'AMJ-'+r.reference+(r.adjusted?' · horas ajustadas':'')+(r.ext?' · factura externa':(r.invoiced?' · facturada':'')),r.technician||'—',r.billable_minutes!=null?dur(r.billable_minutes):'—',r.lt===null?'Sin tarifa':eur(r.lt),
