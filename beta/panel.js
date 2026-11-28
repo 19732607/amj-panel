@@ -1136,7 +1136,7 @@ const SECS={
  informes:['Informes',()=>{ if(!repDay) repDay=todayStr();
    const MS=repPer==='mes', QN=repPer==='qui', WK=repPer==='sem'||QN||MS, PW=MS?'mes':QN?'quincena':'semana', DELA=MS?'del mes':'de la '+PW, ADJ=MS?'mensual':QN?'quincenal':'semanal';
    const ctl=el('div','repctl');
-   const seg=el('div','seg'); [['dia','Diario'],['sem','Semanal'],['qui','Quincenal'],['mes','Mensual'],['tot','Total']].forEach(([k,t])=>{ const on=k!=='tot'; const b=el('button',repPer===k?'on':null,t+(on?'':' · por definir')); b.disabled=!on; b.onclick=()=>{ repPer=k; renderSec() }; seg.append(b) });
+   const seg=el('div','seg'); [['dia','Diario'],['sem','Semanal'],['qui','Quincenal'],['mes','Mensual'],['tot','Total']].forEach(([k,t])=>{ const on=k!=='tot'; const b=el('button',repPer===k?'on':null,t+(on?'':' · por definir')); b.disabled=!on; b.onclick=()=>{ repPer=k; /* del 28 a fin de mes, el mensual abre el cierre que acaba de terminar (el del día 27), no el que empieza */ if(k==='mes'&&+todayStr().slice(8)>=28&&repDay.slice(0,7)===todayStr().slice(0,7)) repDay=todayStr().slice(0,8)+'01'; renderSec() }; seg.append(b) });
    const scl=el('select'); scl.append(new Option('Todos los clientes',''));
    [...new Set(real().map(o=>repCli(o)).filter(Boolean))].sort((x,y)=>clName(x).localeCompare(clName(y))).forEach(c=>scl.append(new Option(clName(c),c))); scl.value=repCl; scl.onchange=()=>{ repCl=scl.value; renderSec() };
    const dIn=el('input'); dIn.type='date'; dIn.value=repDay; dIn.max=todayStr(); dIn.onchange=()=>{ if(dIn.value){ repDay=dIn.value; renderSec() } };
