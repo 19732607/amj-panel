@@ -83,6 +83,10 @@ async function rest(path){ let r=await fetch(SB+'/rest/v1/'+path,{headers:await 
 const MED={}, MAT={}, THU={}; let repFetching=false;
 /* Bloque 3 · histórico de estados (fecha de cancelación) desde la función amj_admin_informe_ordenes. CTX=undefined: sin pedir; null: el servidor no la tiene; objeto: por id de orden. */
 let CTX, ctxP=null;
+/* El hilo (servidor): por orden, lo que ya se informó en un periodo cerrado y lo que llegó tarde. Regla de Antonio (27/11/2026):
+   un periodo cerrado es un periodo cerrado; lo que llega tarde lo asume AMJ y no se cobra después al cliente. */
+let HILO, hiloP=null;
+function repHilo(){ if(HILO!==undefined||hiloP) return; hiloP=rpc('amj_admin_hilo',{p_desde:'2026-01-01',p_hasta:todayStr()}).then(a=>{ HILO={}; ((a&&a.ordenes)||[]).forEach(x=>HILO[x.ref]=x) }).catch(()=>{ HILO=null }).finally(()=>{ hiloP=null; if(sec==='informes') renderSec() }) }
 function repCtx(){ if(CTX!==undefined||ctxP) return; ctxP=rpc('amj_admin_informe_ordenes',{}).then(a=>{ CTX={}; (a||[]).forEach(x=>CTX[x.id]=x) }).catch(()=>{ CTX=null }).finally(()=>{ ctxP=null; if(sec==='informes') renderSec() }) }
 /* Misma definición que el servidor (vista v_kpi_ordenes): la orden se cerró sin poder ejecutar el trabajo. */
 const sinEjecTxt=o=>/^\s*VISITA REALIZADA SIN POSIBILIDAD/i.test(o.report||'')||/no eh podido|no he podido|no fue posible|no se pudo|no ha sido posible/i.test(o.report||'');
@@ -448,9 +452,11 @@ function repSendOpen(){
 async function repCtxReload(ids){ const a=await rpc('amj_admin_informe_ordenes',{}); if(!Array.isArray(a)) throw new Error('respuesta incompleta del servidor'); const N={}; a.forEach(x=>N[x.id]=x);
   const f=x=>JSON.stringify(x&&x.mat_informe||null); if(ids.some(id=>!N[id]||!N[id].mat_informe)) throw new Error('falta el importe de materiales de alguna orden'); const cambian=ids.filter(id=>f(CTX&&CTX[id])!==f(N[id])); CTX=N; return cambian }
 function repMat(o){ const x=CTX&&CTX[o.id], mi=x&&x.mat_informe; if(!mi||mi.fuente==='pendiente'||mi.fuente==='sin_materiales') return [];
-  const b=Math.round(Number(mi.base_cobro||0)*100)/100; if(!(b>0)) return []; const iva=Math.round(b*21)/100, D=MAT[o.id]||[];
+  const h=HILO&&HILO[o.ref], inf=h&&h.informe_materiales;
+  if(!inf&&h&&(h.huecos||[]).includes('material_fuera_de_informe')) return []; /* llegó tarde a un periodo cerrado: lo asume AMJ, no se informa ni se cobra */
+  const b=Math.round(Number(inf&&inf.base!=null?inf.base:mi.base_cobro||0)*100)/100; /* ya informado en un periodo cerrado: el importe que se informó, no se cambia */ if(!(b>0)) return []; const iva=Math.round(b*21)/100, D=MAT[o.id]||[];
   return [{description:D.map(m=>(m.description||'—')+(Number(m.quantity||1)!==1?' × '+Number(m.quantity):'')).sort().join('; ')||'Materiales',quantity:1,subtotal:b,iva:iva,total:Math.round((b+iva)*100)/100,fuente:mi.fuente}] }
-const repMatListo=L=>!!CTX&&L.every(o=>CTX[o.id]&&CTX[o.id].mat_informe);
+const repMatListo=L=>!!CTX&&!!HILO&&L.every(o=>CTX[o.id]&&CTX[o.id].mat_informe);
 function repMatCheck(L){ const box=el('div','repmsg repmat');
   if(!repMatListo(L)){ if(!L.some(o=>(MAT[o.id]||[]).length)&&CTX!==null) return null; box.textContent=CTX===undefined?'Materiales: comprobando importes…':'Materiales: el servidor no ha dado el importe de materiales de todas las órdenes. El informe no muestra materiales y no se puede enviar.'; return box }
   const conM=L.filter(o=>(MAT[o.id]||[]).length||repMat(o).length); if(!conM.length) return null;
@@ -1166,7 +1172,7 @@ const SECS={
    if(repView&&!selN()) repView=false;
    const L=repView?LA.filter(o=>repSel.has(o.id)):LA, SEL=!repView; updSel();
    const wrap=docs=>{ const w=el('div','repdoc rfw'); docs.forEach(d=>w.append(d)); return w };
-   if(WK){ repEnsure(LA.map(o=>o.id)); repCtx(); repPers();
+   if(WK){ repEnsure(LA.map(o=>o.id)); repCtx(); repHilo(); repPers();
      if(repView){ const sel=wcl.filter(c=>repSelW.has(c)), chk=repMatCheck(LA.filter(o=>sel.includes(repCli(o)))); return [ctl].concat(chk?[chk]:[],[src('Así lo verá el cliente: el informe completo '+DELA+'.'),wrap(wcl.filter(c=>repSelW.has(c)).map(c=>repFmt(LA.filter(o=>repCli(o)===c),d0,d1,true,QN,MS,c)))]) }
      const card=el('div','repdoc'); card.append(el('h3','reph3','Informe '+ADJ+' · '+per));
      const tb=el('table','reptb sel wk'), hr=el('tr'); ['','Cliente','Órdenes finalizadas','Inmuebles identificados','Materiales con IVA'].forEach((h,i)=>hr.append(el('th',i?null:'ck',h))); const th=el('thead'); th.append(hr); const bd=el('tbody');
@@ -1175,7 +1181,7 @@ const SECS={
        r.append(k,el('td','b',clName(c)),el('td',null,String(G.length)),el('td',null,G.every(o=>CTX&&CTX[o.id])?String(repCuentaInmuebles(G)):'…'),el('td',null,G.every(o=>o.id in MAT)?eur2(G.reduce((a,o)=>a+repMat(o).reduce((x,m)=>x+Number(m.total||0),0),0)):'…')); bd.append(r) });
      tb.append(th,bd); card.append(tb);
      return [ctl,src('Informe '+ADJ+' completo de cada cliente, con todos los trabajos '+DELA+(MS?' y sus KPI':'')+'. Marca la casilla del cliente y pulsa «Ver» para verlo como lo recibirá, o «Enviar por email».'),card] }
-   if(repView){ repEnsure(L.map(o=>o.id)); repCtx(); repPers(); const cs=new Set(L.map(o=>repCli(o))); const out=[ctl]; if(cs.size>1) out.push(el('div','repmsg','Has marcado órdenes de '+cs.size+' clientes distintos: para enviar, marca solo las de un cliente.')); out.push(src('Así lo verá el cliente: solo las órdenes que has marcado.'),wrap([repFmt(L,repDay,repDay,false)])); return out }
+   if(repView){ repEnsure(L.map(o=>o.id)); repCtx(); repHilo(); repPers(); const cs=new Set(L.map(o=>repCli(o))); const out=[ctl]; if(cs.size>1) out.push(el('div','repmsg','Has marcado órdenes de '+cs.size+' clientes distintos: para enviar, marca solo las de un cliente.')); out.push(src('Así lo verá el cliente: solo las órdenes que has marcado.'),wrap([repFmt(L,repDay,repDay,false)])); return out }
    repEnsure(L.map(o=>o.id));
    const doc=el('div','repdoc'); const hd=el('div','rephd'); const lg=document.querySelector('.brand img'); if(lg){ const im=el('img'); im.src=lg.src; im.alt='AMJ'; hd.append(im) }
    const tt=el('div'); tt.append(el('h2',null,(WK?'Informe semanal':'Informe diario')+(repCl?' · '+clName(repCl):'')),el('div','repsub',per+' · '+L.length+(L.length===1?' orden terminada':' órdenes terminadas')+(SEL?' · marca las que quieres ver y enviar':''))); hd.append(tt); doc.append(hd);
