@@ -149,7 +149,7 @@ function repFmt(L,d0,d1,WK,QN,MS,CL){ const addD0=(d,n)=>{ const x=new Date(d+'T
   const fd=(d,o)=>{ const dd=o.day==='2-digit'?d.slice(8,10):o.day?String(+d.slice(8,10)):'', mm=o.month==='long'?MESL[+d.slice(5,7)-1]:o.month==='short'?MESC[+d.slice(5,7)-1]:''; return [dd,mm,o.year?d.slice(0,4):''].filter(Boolean).join(o.month==='long'?' de ':' ') }, cap1=t=>t?t.charAt(0).toUpperCase()+t.slice(1).toLowerCase():'', dm=d=>d.slice(8,10)+'/'+d.slice(5,7);
   const cls=CL?[CL]:[...new Set(L.map(o=>repCli(o)))], one=cls.length===1, cname=cls.map(clName).join(' + '), city=[...new Set(L.map(o=>cap1(o.loc)).filter(Boolean))].join(' / ');
   const code=o=>(o.piso||o.ad||'—').replace(/^(ENSO|HELP)-/,''), dlong=fd(d1,{day:'numeric',month:'long',year:'numeric'});
-  const per=MS?fd(d1,{month:'long',year:'numeric'}):(QN?(d0.slice(8)==='01'?'1.ª':'2.ª')+' quincena de '+fd(d1,{month:'long'})+' · ':'')+(!WK?dlong:'del '+fd(d0,d0.slice(0,7)===d1.slice(0,7)?{day:'numeric'}:{day:'numeric',month:'long'})+' al '+dlong);
+  const per=MS?fd(d1,{month:'long',year:'numeric'})+' (del '+fd(d0,{day:'numeric',month:'long'})+' al '+fd(d1,{day:'numeric',month:'long'})+')':(QN?(d0.slice(8)==='01'?'1.ª':'2.ª')+' quincena de '+fd(d1,{month:'long'})+' · ':'')+(!WK?dlong:'del '+fd(d0,d0.slice(0,7)===d1.slice(0,7)?{day:'numeric'}:{day:'numeric',month:'long'})+' al '+dlong);
   const dc=d1>todayStr()?todayStr():d1, live=WK&&dc<d1;
   const H=t=>el('h2','rf-h2',t), table=(heads,cl)=>{ const tb=el('table','rf-tb'+(cl?' '+cl:'')), hr=el('tr'); heads.forEach(h=>hr.append(el('th',null,h))); const th=el('thead'); th.append(hr); const bd=el('tbody'); tb.append(th,bd); return [tb,bd] };
   const row=(bd,cells,cl)=>{ const r=el('tr',cl||null); cells.forEach(c=>{ if(c instanceof Node) r.append(c); else r.append(el('td',null,c)) }); bd.append(r); return r };
@@ -267,6 +267,19 @@ function repFmt(L,d0,d1,WK,QN,MS,CL){ const addD0=(d,n)=>{ const x=new Date(d+'T
       if(M.length>1) row(b3,['','','Subtotal AMJ-'+o.ref,td(eur2(sumM(M,'subtotal')),'r'),td(eur2(sumM(M,'iva')),'r'),td(eur2(sumM(M,'total')),'r')],'sub') });
     if(mload&&withM.length){ row(b3,['','','Total '+DELA,td(eur2(sumM(allM,'subtotal')),'r'),td(eur2(sumM(allM,'iva')),'r'),td(eur2(sumM(allM,'total')),'r')],'tot') }
     doc.append(t3);
+    if(MS){ /* Trabajos fuera de tarifa plana: de Ingresos (FINANCE, con o sin orden) y de las órdenes con presupuesto aceptado; sin contar dos veces la misma orden */
+      const cod=repCodigoCli(CL)||CL, r2=v=>Math.round(v*100)/100, ex=((ING&&ING.extras)||[]).filter(x=>!x.anulado_en&&x.cliente===cod&&x.fecha>=d0&&x.fecha<=d1),
+        cob=id=>((ING&&ING.cobros)||[]).filter(c=>!c.anulado_en&&c.extra_id===id).reduce((s,c)=>s+Number(c.importe||0),0), refsIng=new Set(ex.map(x=>Number(x.orden_ref)).filter(Boolean)), R=[];
+      ex.forEach(x=>{ const b=Number(x.importe), iva=r2(b*Number(x.iva_pct)/100), t=r2(b+iva), c=cob(x.id);
+        R.push({f:x.fecha,tr:x.concepto+(x.orden_ref?' · AMJ-'+x.orden_ref:''),b,iva,t,s:!x.numero_factura?'Se factura aparte':c>=t-0.005?'Factura '+x.numero_factura+' · cobrada':'Factura '+x.numero_factura+' · pendiente de cobro'}) });
+      L.forEach(o=>{ const x=CTX&&CTX[o.id]; if(!x||x.presupuesto_estado!=='aceptado'||x.presupuesto_importe==null||refsIng.has(o.ref)) return; const b=Number(x.presupuesto_importe), iva=r2(b*0.21);
+        R.push({f:dayOf(o.fa),tr:'AMJ-'+o.ref+' · '+(x.urgente?'Urgencia · ':x.fuera_horario?'Fuera de horario · ':'')+(o.work||'').replace(/\.$/,'')+' · '+code(o),b,iva,t:r2(b+iva),s:'Pendiente de facturar'}) });
+      R.sort((a,b)=>a.f<b.f?-1:a.f>b.f?1:0); const sb=r2(R.reduce((s,r)=>s+r.b,0)), si=r2(R.reduce((s,r)=>s+r.iva,0)), st=r2(R.reduce((s,r)=>s+r.t,0));
+      doc.append(H('Trabajos fuera de tarifa plana')); const p6=el('p','rf-intro');
+      p6.append(el('b',null,R.length?R.length+(R.length===1?' trabajo':' trabajos')+' por presupuesto o urgencia: '+eur2(sb)+' + IVA ('+eur2(st)+').':'Este mes no hay trabajos fuera de tarifa plana.'),
+        document.createTextNode(R.length?' Son reparaciones especializadas, instalaciones y urgencias que, según la cláusula 13 del contrato, se presupuestan y aprueban aparte de la tarifa plana. Se indica si ya están facturados y cobrados.':'')); doc.append(p6);
+      if(R.length){ const [t6,b6]=table(['Fecha','Trabajo','Base','IVA','Total','Situación']); R.forEach(r=>row(b6,[td(dm(r.f),'nwr'),r.tr,td(eur2(r.b),'r'),td(eur2(r.iva),'r'),td(eur2(r.t),'r'),r.s]));
+        row(b6,['','Total '+DELA,td(eur2(sb),'r'),td(eur2(si),'r'),td(eur2(st),'r'),''],'tot'); doc.append(t6) } }
     const open=real().filter(o=>cls.includes(repCli(o))&&dayOf(o.ca)<=dc&&repAbiertaAl(o,dc)); /* mismo criterio que el KPI «abiertas» */
     if(open.length){ doc.append(H(live?'Órdenes abiertas a fecha de '+dm(dc):'Órdenes abiertas al cierre '+DELA)); const [t4,b4]=table(['Orden / inmueble','Trabajo','Estado']); open.sort((x,y)=>x.ref-y.ref).forEach(o=>{ /* estado: en un informe en curso, el de hoy; en uno cerrado, «abierta en esa fecha» y, si se terminó después, cuándo (primer cierre posterior al corte) */
       const x=CTX&&CTX[o.id], ev=x&&Array.isArray(x.eventos)&&x.eventos.length?x.eventos:null, des=ev?(ev.filter(e=>e.a==='finish'&&dayOf(e.t)>dc)[0]||{}).t:(o.st==='completed'?o.fa:null);
@@ -1128,7 +1141,7 @@ const SECS={
    [...new Set(real().map(o=>repCli(o)).filter(Boolean))].sort((x,y)=>clName(x).localeCompare(clName(y))).forEach(c=>scl.append(new Option(clName(c),c))); scl.value=repCl; scl.onchange=()=>{ repCl=scl.value; renderSec() };
    const dIn=el('input'); dIn.type='date'; dIn.value=repDay; dIn.max=todayStr(); dIn.onchange=()=>{ if(dIn.value){ repDay=dIn.value; renderSec() } };
    const addD=(d,n)=>{ const x=new Date(d+'T12:00:00'); x.setDate(x.getDate()+n); return x.toLocaleDateString('sv-SE') };
-   const mv=n=>{ let v=addD(repDay,n); if(MS){ const a=repDay.slice(0,8); v=n<0?addD(a+'01',-1).slice(0,8)+'01':addD(a+'28',4).slice(0,8)+'01'; if(v.slice(0,7)===todayStr().slice(0,7)) v=todayStr() } if(QN){ const dd=+repDay.slice(8), a=repDay.slice(0,8); v=n<0?addD(a+(dd<=15?'01':'16'),-1):(dd<=15?a+'16':addD(a+'28',4).slice(0,8)+'01') } if(v<=todayStr()||n<0){ repDay=v>todayStr()?todayStr():v; renderSec() } };
+   const mv=n=>{ let v=addD(repDay,n); if(MS){ const b=d1.slice(0,8); v=n<0?addD(b+'01',-1).slice(0,8)+'01':addD(b+'28',4).slice(0,8)+'01'; if(n>0&&addD(v,-4)<=todayStr()){ repDay=v; renderSec(); return } } if(QN){ const dd=+repDay.slice(8), a=repDay.slice(0,8); v=n<0?addD(a+(dd<=15?'01':'16'),-1):(dd<=15?a+'16':addD(a+'28',4).slice(0,8)+'01') } if(v<=todayStr()||n<0){ repDay=v>todayStr()?todayStr():v; renderSec() } };
    const st=WK?7:1, prev=el('button','out',MS?'◀ Mes anterior':QN?'◀ Quincena anterior':WK?'◀ Semana anterior':'◀ Día anterior'), next=el('button','out',MS?'Mes siguiente ▶':QN?'Quincena siguiente ▶':WK?'Semana siguiente ▶':'Día siguiente ▶'); prev.onclick=()=>mv(-st); next.onclick=()=>mv(st); prev.style.marginLeft=next.style.marginLeft='0';
    const pr=el('button','out','🖨 Imprimir / PDF'); pr.onclick=()=>window.print();
    const bVer=el('button','out'), bEnv=el('button','out'), bBack=el('button','out','◀ Volver a seleccionar'); bVer.style.marginLeft=bEnv.style.marginLeft=bBack.style.marginLeft='0';
@@ -1141,10 +1154,11 @@ const SECS={
    { const lr=el('a','rpmlk','Registro de envíos'); lr.href='#'; lr.id='represg'; lr.onclick=ev=>{ ev.preventDefault(); repPendOpen() }; row.append(lr) }
    /* periodo */
    let d0=repDay, d1=repDay; if(WK){ const wd=(new Date(repDay+'T12:00:00').getDay()+6)%7; d0=addD(repDay,-wd); d1=addD(d0,6) }
-   if(MS){ const a=repDay.slice(0,8); d0=a+'01'; d1=addD(addD(a+'28',4).slice(0,8)+'01',-1) }
+   /* Mensual = cierre de facturación del día 27 (Antonio, 27/11/2026): del 28 del mes anterior al 27 del mes. Del 28 en adelante ya es el mes siguiente. */
+   if(MS){ let Y=+repDay.slice(0,4), Mo=+repDay.slice(5,7); if(+repDay.slice(8)>=28){ Mo++; if(Mo>12){ Mo=1; Y++ } } const pY=Mo===1?Y-1:Y, pM=Mo===1?12:Mo-1; d0=pY+'-'+String(pM).padStart(2,'0')+'-28'; d1=Y+'-'+String(Mo).padStart(2,'0')+'-27' }
    if(QN){ const a=repDay.slice(0,8); if(+repDay.slice(8)<=15){ d0=a+'01'; d1=a+'15' } else { d0=a+'16'; d1=addD(addD(a+'28',4).slice(0,8)+'01',-1) } }
    const fd=(d,o)=>new Date(d+'T12:00:00').toLocaleDateString('es-ES',o);
-   const per=MS?(m=>m.charAt(0).toUpperCase()+m.slice(1))(fd(d1,{month:'long',year:'numeric'})):WK?((QN?(d0.slice(8)==='01'?'1.ª':'2.ª')+' quincena · del ':'Semana del ')+fd(d0,{day:'numeric',month:'long'})+' al '+fd(d1,{day:'numeric',month:'long',year:'numeric'})):(()=>{ const f=fd(repDay,{weekday:'long',day:'numeric',month:'long',year:'numeric'}); return f.charAt(0).toUpperCase()+f.slice(1) })();
+   const per=MS?(m=>m.charAt(0).toUpperCase()+m.slice(1))(fd(d1,{month:'long',year:'numeric'}))+' · del '+fd(d0,{day:'numeric',month:'long'})+' al '+fd(d1,{day:'numeric',month:'long'}):WK?((QN?(d0.slice(8)==='01'?'1.ª':'2.ª')+' quincena · del ':'Semana del ')+fd(d0,{day:'numeric',month:'long'})+' al '+fd(d1,{day:'numeric',month:'long',year:'numeric'})):(()=>{ const f=fd(repDay,{weekday:'long',day:'numeric',month:'long',year:'numeric'}); return f.charAt(0).toUpperCase()+f.slice(1) })();
    const dcL=d1>todayStr()?todayStr():d1, LA=real().filter(o=>{ if(repCl&&repCli(o)!==repCl) return false; const c=repCierreAl(o,dcL); return !!c&&repEstadoAl(o,dcL)!=='cancelada'&&dayOf(c.t)>=d0&&dayOf(c.t)<=dcL }).map(o=>{ const c=repCierreAl(o,dcL); return c.t===o.fa?o:Object.assign({},o,{fa:c.t}) }).sort((x,y)=>new Date(x.fa)-new Date(y.fa)||x.ref-y.ref);
    /* también los clientes con actividad anterior aunque no tengan cierres en el periodo: su informe (a cero) debe poder consultarse */
    const wcl=[...new Set((WK?real().filter(o=>(repCli(o)==='HELP'||repCli(o)==='ENSO')&&o.st!=='cancelled'&&dayOf(o.ca)<=d1&&(!repCl||repCli(o)===repCl)):LA).map(o=>repCli(o)).concat(LA.map(o=>repCli(o))))].sort((x,y)=>clName(x).localeCompare(clName(y)));
