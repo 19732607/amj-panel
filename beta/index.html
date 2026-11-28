@@ -170,7 +170,7 @@ tr.flash td{animation:fl 2.5s}@keyframes fl{0%{background:#fff3b8}100%{backgroun
  <div class="nav" data-sec="tecnicos">☺ Técnicos</div>
  <div class="nav" data-sec="clientes">⌂ Clientes e inmuebles</div>
  <div class="sec">DINERO</div>
- <div class="nav" data-sec="ingresos">↗ Ingresos y resultado</div>
+ <div class="nav" data-sec="ingresos">↗ FINANCE por cliente</div>
  <div class="nav" data-sec="pagos">€ Pagos a técnicos</div>
  <div class="nav" data-sec="materiales">🧾 Materiales y tickets</div>
  <div class="sec">CONTROL</div>
@@ -218,7 +218,7 @@ tr.flash td{animation:fl 2.5s}@keyframes fl{0%{background:#fff3b8}100%{backgroun
 const acceso = document.getElementById('lerr');
 if (panelPublicado) {
   const programa = document.createElement('script');
-  programa.src = 'panel.js?v=cierre27d';
+  programa.src = 'panel.js?v=finance1';
   programa.onload = () => {
     for (const id of ['le', 'lp', 'lb']) document.getElementById(id).disabled = false;
   };

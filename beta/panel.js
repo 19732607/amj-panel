@@ -736,6 +736,76 @@ function ingCalc(){ const hoyM=todayStr().slice(0,7), desdeM=mesMas(hoyM,-11);
   const meses=Object.values(porMes).map(g=>({...g,entra:g.fijos+g.extras,queda:g.fijos+g.extras-g.mo})).sort((a,b)=>b.mes.localeCompare(a.mes));
   lista.sort((a,b)=>b.mes.localeCompare(a.mes)||a.cliente.localeCompare(b.cliente));
   return {hoyM,meses,lista,avisos,F,X} }
+
+/* FINANCE POR CLIENTE (28/11, orden de Antonio): un bloque por cliente, sacado de su ficha.
+   Cuota = tarifa plana por el periodo de cierre del cliente (día de cierre de la ficha; sin día = mes natural).
+   Extras = cuando se facturen, sin atarse al cierre. Estados: pendiente de facturación → facturado → cobrado. */
+let finMes={};
+const FIN_TXT={pr:['Se factura en el cierre','s-cancelled'],pf:['Pendiente de facturación','s-pending'],fp:['Facturado · pendiente de cobro','s-active'],fx:['Facturado · cobro parcial','s-active'],co:['Cobrado','ok']};
+function finPer(dia,ym){ if(!dia) return [ym+'-01',mesFin(ym)]; return [mesMas(ym,-1)+'-'+String(dia+1).padStart(2,'0'), ym+'-'+String(dia).padStart(2,'0')] }
+function finMesHoy(dia){ const t=todayStr(), ym=t.slice(0,7); return dia&&Number(t.slice(8))>dia?mesMas(ym,1):ym }
+function finDatos(){
+  const F=(ING.fijos||[]).filter(f=>!f.anulado_en), X=(ING.extras||[]).filter(x=>!x.anulado_en);
+  const ovr={}; (ING.meses||[]).forEach(m=>{ ovr[m.fijo_id+'|'+String(m.mes).slice(0,7)]=m });
+  const cobF={}, cobX={}; (ING.cobros||[]).filter(c=>!c.anulado_en).forEach(c=>{ if(c.tipo==='fijo'){ const k=c.fijo_id+'|'+String(c.mes).slice(0,7); cobF[k]=(cobF[k]||0)+Number(c.importe) } else cobX[c.extra_id]=(cobX[c.extra_id]||0)+Number(c.importe) });
+  const fichas={}; (ING.fichas||[]).forEach(f=>{ fichas[f.codigo]=f });
+  const refCl={}; O.forEach(o=>{ refCl[Number(o.ref)]=clName(o.cl) });
+  const conOrd=new Set(O.filter(o=>!o.test).map(o=>clName(o.cl)));
+  const codes=new Set([...F.map(f=>f.cliente),...X.map(x=>x.cliente)]); (ING.fichas||[]).forEach(f=>{ if(Number(f.cuota_mensual)>0||conOrd.has(f.codigo)) codes.add(f.codigo) });
+  const est=(tot,fac,cob)=>tot>0&&cob>=tot-0.004?'co':fac?(cob>0.004?'fx':'fp'):'pf';
+  return [...codes].sort((a,b)=>a.localeCompare(b)).map(cod=>{
+    const fi=fichas[cod]||{codigo:cod,nombre:cod}, dia=fi.dia_cierre?Number(fi.dia_cierre):null, hoyM=finMesHoy(dia), items=[];
+    F.filter(f=>f.cliente===cod).forEach(f=>{ for(let m=f.desde.slice(0,7); m<=hoyM&&(!f.hasta||m<=f.hasta.slice(0,7)); m=mesMas(m,1)){ const r=ingFijoMes(f,m,ovr); if(!r) continue;
+      const mr=ovr[f.id+'|'+m]||{}, tot=ingR2(r.imp*(1+Number(f.iva_pct)/100)), cob=ingR2(cobF[f.id+'|'+m]||0), fac=mr.numero_factura||null, fin=finPer(dia,m)[1];
+      let e=est(tot,fac,cob); if(e==='pf'&&fin>=todayStr()) e='pr';
+      items.push({clase:'fijo',ref:f.id,mes:m,orden:fin,cierre:fin,cuando:'Cuota de '+mesTxt(m),tipo:'Tarifa plana',concepto:f.concepto,base:r.imp,tot,cob,pend:ingR2(tot-cob),fac,ffac:mr.fecha_factura||null,doc:fac||'—',e,titulo:cod+' · '+f.concepto+' · '+mesTxt(m)}) } });
+    X.filter(x=>x.cliente===cod).forEach(x=>{ const tot=ingR2(Number(x.importe)*(1+Number(x.iva_pct)/100)), cob=ingR2(cobX[x.id]||0), fac=x.numero_factura||null;
+      items.push({clase:'extra',ref:x.id,mes:null,fecha:String(x.fecha),orden:String(x.fecha),cuando:fechaTxt(x.fecha),tipo:'Extra',concepto:x.concepto+(x.orden_ref?' · AMJ-'+x.orden_ref:''),base:Number(x.importe),tot,cob,pend:ingR2(tot-cob),fac,ffac:x.fecha_factura||null,doc:fac||'—',e:est(tot,fac,cob),titulo:cod+' · '+x.concepto,x}) });
+    items.sort((a,b)=>b.orden.localeCompare(a.orden));
+    const costes=(P||[]).filter(x=>x.finished_at&&!/prueba|NO ASIGNAR/i.test(x.technician||'')&&refCl[Number(x.reference)]===cod);
+    return {cod,fi,dia,hoyM,items,costes} }) }
+function finFila(i){ const acc=el('span');
+  if(i.e==='pf'||i.e==='pr') acc.append(ingMini('Anotar factura',()=>ingAbrir('factura',i)));
+  if(i.e==='fp'||i.e==='fx') acc.append(ingMini('Anotar cobro',()=>ingAbrir('cobro',i)));
+  if(i.clase==='extra') acc.append(ingMini('Corregir',()=>ingAbrir('extra',i.x)),ingMini('Anular',()=>ingAbrir('anular',{que:'extra',id:i.x.id,titulo:i.titulo+' · '+eur(i.base)})));
+  const t=FIN_TXT[i.e];
+  return [i.cuando,i.tipo,i.concepto,eur(i.base),eur(i.tot),i.fac?i.fac+(i.ffac?' · '+fechaTxt(i.ffac):''):'—',badge(i.e==='pr'?t[0]+' del '+fechaTxt(i.cierre):t[0],t[1]),acc] }
+function finBloque(C){
+  /* Del día siguiente al cierre a fin de mes se abre el periodo que acaba de cerrar, que es el que toca facturar. */
+  const ym=finMes[C.cod]||(C.dia&&Number(todayStr().slice(8))>C.dia?mesMas(C.hoyM,-1):C.hoyM), [d0,d1]=finPer(C.dia,ym), fi=C.fi;
+  const enP=i=>i.clase==='fijo'?i.mes===ym:(i.fecha>=d0&&i.fecha<=d1);
+  const delP=C.items.filter(enP), antes=C.items.filter(i=>!enP(i)&&i.e!=='co'&&(i.clase==='fijo'?i.mes<ym:i.fecha<d0));
+  const cost=C.costes.filter(x=>{ const d=dayOf(x.finished_at); return d>=d0&&d<=d1 });
+  const mo=cost.reduce((t,x)=>t+Number(x.labor_total||0),0)/1.21, mat=cost.reduce((t,x)=>t+Number(x.materials_total||0),0), pt=cost.reduce((t,x)=>t+Number(x.pending_gross||0),0);
+  const entra=delP.reduce((t,i)=>t+i.base,0), vis=delP.concat(antes);
+  const pf=vis.filter(i=>i.e==='pf').reduce((t,i)=>t+i.tot,0), pc=vis.filter(i=>i.e==='fp'||i.e==='fx').reduce((t,i)=>t+i.pend,0);
+  const heads=['Fecha','Tipo','Concepto','Base','Con IVA','Factura','Estado',''];
+  const c=card((fi.nombre||C.cod)+(fi.nombre&&fi.nombre!==C.cod?' · '+C.cod:''),heads,delP.map(finFila),'Nada anotado en este periodo.');
+  const top=el('div'); top.style.cssText='display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:-4px 0 6px';
+  const per=el('b',null,(C.dia?'Cierre del '+fechaTxt(d0)+' al '+fechaTxt(d1):'Mes de '+mesTxt(ym))+(ym===C.hoyM?' · en curso':''));
+  top.append(ingMini('‹ Anterior',()=>{ finMes[C.cod]=mesMas(ym,-1); renderSec() }),per);
+  if(ym<C.hoyM) top.append(ingMini('Siguiente ›',()=>{ finMes[C.cod]=mesMas(ym,1); renderSec() }));
+  const ficha=[]; if(Number(fi.cuota_mensual)>0) ficha.push('Tarifa plana '+eur(fi.cuota_mensual)+' + IVA'); if(fi.cupo_mensual) ficha.push('cupo '+fi.cupo_mensual+' avisos');
+  if(fi.tarifa_hora_bloque) ficha.push(eur(fi.tarifa_hora_bloque)+'/h'+(fi.tarifa_hora_fuera_horario?' ('+eur(fi.tarifa_hora_fuera_horario)+'/h fuera de horario)':''));
+  ficha.push(C.dia?'cierre el día '+C.dia:'cierre a fin de mes'); if(fi.contrato_fin) ficha.push('contrato hasta el '+fechaTxt(fi.contrato_fin));
+  const cuotaF=delP.filter(i=>i.clase==='fijo').reduce((t,i)=>t+i.base,0);
+  const nodos=[top,src('Ficha del cliente: '+ficha.join(' · ')+'.')];
+  if(Number(fi.cuota_mensual)>0&&Math.abs(cuotaF-Number(fi.cuota_mensual))>0.004) nodos.push(src('⚠ La tarifa plana de la ficha ('+eur(fi.cuota_mensual)+') no coincide con la cuota anotada en FINANCE para este periodo ('+eur(cuotaF)+'). Revisa cuál es la buena.'));
+  nodos.push(kpis([[eur(entra),'entra sin IVA en el periodo'],[eur(mo),'mano de obra de técnicos'],[eur(entra-mo),'queda'],[eur(pf),'pendiente de facturación'],[eur(pc),'pendiente de cobro']]));
+  const tb=c.querySelector('table'); nodos.forEach(n=>c.insertBefore(n,tb));
+  const bar=el('div'); bar.style.cssText='margin:10px 0 4px'; bar.append(ingMini('＋ Extra de '+(fi.nombre||C.cod),()=>ingAbrir('extra',{soloCliente:C.cod})),ingMini('＋ Cuota fija',()=>ingAbrir('fijo',{soloCliente:C.cod}))); c.append(bar);
+  if(antes.length){ const a=card('De periodos anteriores, sin facturar o sin cobrar',heads,antes.map(finFila)); const t2=a.querySelector('table'); c.append(a.querySelector('h3'),t2) }
+  const misF=(ING.fijos||[]).filter(f=>f.cliente===C.cod&&!f.anulado_en);
+  if(misF.length){ const fc=card('Cuota fija anotada en FINANCE',['Concepto','Al mes sin IVA','Con IVA','Desde','Hasta',''],misF.map(f=>{ const a=el('span'); a.append(ingMini('Corregir',()=>ingAbrir('fijo',f)),ingMini('Importe de un mes',()=>ingAbrir('mes',{f,m:ym})),ingMini('Anular',()=>ingAbrir('anular',{que:'fijo',id:f.id,titulo:C.cod+' · '+f.concepto})));
+      return [f.concepto,eur(f.importe_mensual),eur(Number(f.importe_mensual)*(1+Number(f.iva_pct)/100)),fechaTxt(f.desde),f.hasta?fechaTxt(f.hasta):'vigente',a] })); c.append(fc.querySelector('h3'),fc.querySelector('table')) }
+  const ids=new Set(C.items.map(i=>i.ref)), cobs=(ING.cobros||[]).filter(k=>!k.anulado_en&&ids.has(k.tipo==='fijo'?k.fijo_id:k.extra_id));
+  if(cobs.length){ const tit={}; C.items.forEach(i=>{ tit[i.ref+'|'+(i.mes||'')]=i.titulo });
+    const kc=card('Cobros anotados',['Fecha','Importe','De qué','Referencia',''],cobs.slice().reverse().map(k=>{ const de=tit[(k.tipo==='fijo'?k.fijo_id:k.extra_id)+'|'+(k.tipo==='fijo'?String(k.mes).slice(0,7):'')]||'—';
+      return [k.fecha?fechaTxt(k.fecha):'Sin fecha',eur(k.importe),de,k.referencia||'—',ingMini('Anular cobro',()=>ingAbrir('anular',{que:'cobro',id:k.id,titulo:'cobro de '+eur(k.importe)+' · '+de}))] }));
+    c.append(kc.querySelector('h3'),kc.querySelector('table')) }
+  const cc=card('Lo que cuesta en el periodo',['Órdenes hechas por técnicos','Mano de obra sin IVA','Materiales','Pendiente de pagar a técnicos'],[[cost.length,eur(mo),eur(mat),eur(pt)]]);
+  c.append(cc.querySelector('h3'),cc.querySelector('table'));
+  return c }
 /* COBROS (27/11): lo facturado y lo cobrado viven en tablas distintas. Un cobro es dinero que entra, IVA incluido. */
 const ingSuma=a=>(a||[]).reduce((t,c)=>t+Number(c.importe),0);
 const ingR2=v=>Math.round(v*100)/100;
@@ -754,7 +824,9 @@ function ingDeuda(R){ const porF={}, porX={}; (ING.cobros||[]).filter(c=>!c.anul
   return {lista,fijo:sum('fijo'),extra:sum('extra'),todo:sum('')} }
 const ingEstadoCobro=d=>d.pend<=0.004?badge('Cobrado','ok'):badge(d.cob>0.004?'Cobro parcial':'Pendiente de cobro','s-pending');
 function ingAbrir(tipo,dato){ ingMsg=null;
-  if(tipo==='fijo') ingForm={tipo,id:dato?dato.id:nuevoId(),nuevo:!dato,cliente:dato?dato.cliente:'',concepto:dato?dato.concepto:'Cuota mensual',importe:dato?String(dato.importe_mensual):'',iva:dato?String(Number(dato.iva_pct)):'21',desde:dato?dato.desde:'',hasta:dato&&dato.hasta?dato.hasta:'',notas:dato&&dato.notas?dato.notas:'',error:''};
+  if(dato&&dato.soloCliente){ const c=dato.soloCliente; dato=null; ingAbrir(tipo,null); ingForm.cliente=c; renderSec(); return }
+  if(tipo==='factura') ingForm={tipo,que:dato.clase,ref:dato.ref,mes:dato.mes,titulo:dato.titulo,total:dato.tot,factura:dato.fac||'',fecha:dato.ffac||hoyISO(),error:''};
+  else if(tipo==='fijo') ingForm={tipo,id:dato?dato.id:nuevoId(),nuevo:!dato,cliente:dato?dato.cliente:'',concepto:dato?dato.concepto:'Cuota mensual',importe:dato?String(dato.importe_mensual):'',iva:dato?String(Number(dato.iva_pct)):'21',desde:dato?dato.desde:'',hasta:dato&&dato.hasta?dato.hasta:'',notas:dato&&dato.notas?dato.notas:'',error:''};
   else if(tipo==='extra') ingForm={tipo,id:dato?dato.id:nuevoId(),nuevo:!dato,cliente:dato?dato.cliente:'',fecha:dato?dato.fecha:hoyISO(),concepto:dato?dato.concepto:'',importe:dato?String(dato.importe):'',iva:dato?String(Number(dato.iva_pct)):'21',orden:dato&&dato.orden_ref?String(dato.orden_ref):'',factura:dato&&dato.numero_factura?dato.numero_factura:'',notas:dato&&dato.notas?dato.notas:'',error:''};
   else if(tipo==='mes') ingForm={tipo,f:dato.f,mes:dato.m||todayStr().slice(0,7),importe:dato.imp!=null?String(dato.imp):'',motivo:'',error:''};
   else if(tipo==='cobro') ingForm={tipo,id:nuevoId(),que:dato.clase,ref:dato.ref,mes:dato.mes,titulo:dato.titulo,total:dato.tot,pend:dato.pend,importe:dato.pend.toFixed(2),fecha:'',referencia:dato.doc&&dato.doc!=='—'?(dato.clase==='extra'?'Factura '+dato.doc:dato.doc):'',notas:'',error:''};
@@ -781,6 +853,11 @@ async function ingEnviar(){ const f=ingForm; let nombre, args, hecho;
     if(f.motivo.trim().length<3) return ingFallo('Escribe el motivo, por ejemplo «mes partido».');
     nombre='amj_admin_ingreso_fijo_mes'; args={p_fijo:f.f.id,p_mes:f.mes+'-01',p_importe:imp,p_motivo:f.motivo.trim()};
     hecho=f.f.cliente+' · '+f.f.concepto+': '+mesTxt(f.mes)+' queda en '+eur(imp)+'.' }
+  else if(f.tipo==='factura'){
+    if(!f.factura.trim()) return ingFallo('Escribe el número de factura, por ejemplo 075/26/57.');
+    if(!f.fecha) return ingFallo('Pon la fecha de la factura.'); if(f.fecha>hoyISO()) return ingFallo('La fecha de la factura no puede ser futura.');
+    nombre='amj_admin_ingreso_facturar'; args={p_tipo:f.que,p_ref:f.ref,p_mes:f.mes?f.mes+'-01':null,p_factura:f.factura.trim(),p_fecha:f.fecha};
+    hecho='Facturado: '+f.titulo+' · factura '+f.factura.trim()+'.' }
   else if(f.tipo==='cobro'){
     if(!(imp>0)) return ingFallo('Escribe lo cobrado, IVA incluido.'); if(imp>f.pend+0.004) return ingFallo('No puedes anotar más de lo que queda por cobrar: '+eur(f.pend)+'.');
     if(f.fecha&&f.fecha>hoyISO()) return ingFallo('La fecha del cobro no puede ser futura.');
@@ -816,6 +893,9 @@ function ingPanel(clientes){ const f=ingForm; if(!f) return null; const c=el('di
   else if(f.tipo==='mes'){ c.append(el('h3',null,'Importe real de un mes · '+f.f.cliente+' · '+f.f.concepto));
     c.append(src('Para un mes que no se facturó por la cuota entera ('+eur(f.f.importe_mensual)+'): mes partido, descuento o mes sin facturar. Escribe lo que facturaste de verdad, sin IVA.'));
     fila.append(campo('Mes',payEntrada(f.mes,v=>{f.mes=v},'month')),campo('Importe real de ese mes, sin IVA',payEntrada(f.importe,v=>{f.importe=v},'text',{inputMode:'decimal'})),campo('Motivo',payEntrada(f.motivo,v=>{f.motivo=v},'text',{maxLength:500,placeholder:'Mes partido, descuento…'}))) }
+  else if(f.tipo==='factura'){ c.append(el('h3',null,'Anotar factura · '+f.titulo));
+    c.append(src('Total con IVA: '+eur(f.total)+'. Al anotar la factura pasa de «Pendiente de facturación» a «Facturado». El cobro se anota después, cuando entre el dinero.'));
+    fila.append(campo('N.º de factura',payEntrada(f.factura,v=>{f.factura=v},'text',{maxLength:60,placeholder:'075/26/57'})),campo('Fecha de la factura',payEntrada(f.fecha,v=>{f.fecha=v},'date'))) }
   else if(f.tipo==='cobro'){ c.append(el('h3',null,'Anotar cobro · '+f.titulo));
     c.append(src('Lo que ha entrado en el banco, IVA INCLUIDO. Facturado: '+eur(f.total)+' · queda por cobrar: '+eur(f.pend)+'. Si te pagan en dos veces, anota cada cobro por separado. La fecha puede quedar vacía si ahora no la sabes.'));
     fila.append(campo('Cobrado, IVA incluido',payEntrada(f.importe,v=>{f.importe=v},'text',{inputMode:'decimal'})),campo('Fecha del cobro (opcional)',payEntrada(f.fecha,v=>{f.fecha=v},'date')),
@@ -1059,43 +1139,16 @@ const SECS={
        .sort((a,b)=>b.n-a.n||a.c.localeCompare(b.c));
      out.push(card(clName(g.cl)+' · '+g.ci+' · '+P_.length+(P_.length===1?' inmueble':' inmuebles')+' · '+conOrd+' con órdenes',['Piso','Dirección','Ciudad','Órdenes','Terminadas','Abiertas','Horas','Última'],rows)) });
    return out }],
- ingresos:['Ingresos y resultado',()=>{ if(!ING) return [el('div','empty','Cargando ingresos…')];
-   const R=ingCalc(), out=[], num=v=>eur(v), cur=R.meses.find(m=>m.mes===R.hoyM)||{fijos:0,extras:0,mo:0,entra:0,queda:0};
-   const clientes=[...new Set([...(ING.clientes||[]),...(ING.fijos||[]).map(f=>f.cliente),...(ING.extras||[]).map(x=>x.cliente)])].sort((a,b)=>a.localeCompare(b));
-   out.push(kpis([[num(cur.fijos),'fijos de '+mesTxt(R.hoyM)],[num(cur.extras),'extras de '+mesTxt(R.hoyM)],[num(cur.mo),'mano de obra de técnicos'],[num(cur.queda),'queda antes de gastos generales']]));
-   out.push(src('Todo SIN IVA. Queda = fijos + extras − mano de obra de técnicos. No incluye materiales, que van en su columna aparte, ni gastos generales, que todavía no se anotan aquí. El coste solo recoge los trabajos hechos por la app de AMJ. Últimos 12 meses.'));
+ ingresos:['FINANCE · por cliente',()=>{ if(!ING) return [el('div','empty','Cargando FINANCE…')];
+   const out=[], CL=finDatos();
+   const all=CL.flatMap(C=>C.items), pf=all.filter(i=>i.e==='pf').reduce((t,i)=>t+i.tot,0), pc=all.filter(i=>i.e==='fp'||i.e==='fx').reduce((t,i)=>t+i.pend,0);
+   out.push(kpis([[eur(pf),'pendiente de facturación (todos los clientes)'],[eur(pc),'facturado y pendiente de cobro'],[CL.length,CL.length===1?'cliente':'clientes']]));
+   out.push(src('Cada cliente va por separado y sale de su ficha: tarifa plana, cupo, tarifas y día de cierre. La cuota va por el periodo de cierre del cliente; los extras se facturan cuando se quiera. Cada anotación pasa por tres estados: pendiente de facturación → facturado → cobrado. Base = sin IVA.'));
    if(ingMsg){ const a=el('div','card'), t=el('div',null,ingMsg); t.style.cssText='font-weight:600'; a.append(t); out.push(a) }
+   const clientes=[...new Set([...(ING.clientes||[]),...(ING.fijos||[]).map(f=>f.cliente),...(ING.extras||[]).map(x=>x.cliente)])].sort((a,b)=>a.localeCompare(b));
    const form=ingPanel(clientes); if(form) out.push(form);
-   else { const bar=el('div','card'), w=el('div'); w.style.cssText='display:flex;gap:10px;flex-wrap:wrap'; w.append(ingBoton('＋ Añadir cuota fija',()=>ingAbrir('fijo'),true),ingBoton('＋ Añadir ingreso extra',()=>ingAbrir('extra'),true)); bar.append(w); out.push(bar) }
-   const D=ingDeuda(R);
-   out.push(kpis([[eur(D.todo.tot),'facturado, IVA incluido'],[eur(D.todo.cob),'cobrado'],[eur(D.todo.pend),'pendiente de cobro'],[D.lista.filter(d=>d.pend>0.004).length,'cuotas o facturas por cobrar']]));
-   out.push(card('Cobrado y pendiente',['','Facturado con IVA','Cobrado','Pendiente de cobro'],
-     [['Cuotas fijas de contrato',eur(D.fijo.tot),eur(D.fijo.cob),eur(D.fijo.pend)],['Trabajos extra',eur(D.extra.tot),eur(D.extra.cob),eur(D.extra.pend)],
-      {cells:['Total',eur(D.todo.tot),eur(D.todo.cob),eur(D.todo.pend)]}],'Todavía no hay nada facturado.'));
-   out.push(card('Detalle: qué está cobrado y qué falta',['Mes o fecha','Tipo','Cliente','Concepto','Factura','Facturado con IVA','Cobrado','Pendiente','Estado',''],
-     D.lista.map(d=>[d.cuando,d.clase==='fijo'?'Cuota fija':'Extra',d.cliente,d.concepto,d.doc,eur(d.tot),eur(d.cob),eur(d.pend),ingEstadoCobro(d),
-       d.pend>0.004?ingMini('Anotar cobro',()=>ingAbrir('cobro',d)):el('span')]),'Añade una cuota o un extra y aquí verás si está cobrado.'));
-   if(R.avisos.length) out.push(card('Meses incompletos sin ajustar',['Cliente','Cuota','Mes','Periodo real','Cuenta ahora',''],
-     R.avisos.map(a=>[a.f.cliente,a.f.concepto,mesTxt(a.m),(a.m===a.f.desde.slice(0,7)?'desde el '+fechaTxt(a.f.desde):'')+(a.f.hasta&&a.m===a.f.hasta.slice(0,7)?' hasta el '+fechaTxt(a.f.hasta):''),eur(a.imp)+' (cuota entera)',ingMini('Poner el importe real',()=>ingAbrir('mes',{f:a.f,m:a.m,imp:a.imp}))])));
-   out.push(card('Resultado por mes',['Mes','Fijos','Extras','Entra','Mano de obra técnicos','Queda','Materiales (aparte)','Órdenes'],
-     R.meses.map(m=>[mesTxt(m.mes)+(m.mes===R.hoyM?' · en curso':''),num(m.fijos),num(m.extras),num(m.entra),num(m.mo),num(m.queda),num(m.mat),m.ord]),'Todavía no hay cuotas, extras ni trabajos en los últimos 12 meses.'));
-   out.push(card('Por cliente y mes',['Mes','Cliente','Fijos','Extras','Entra','Mano de obra técnicos','Queda','Materiales (aparte)','Órdenes'],
-     R.lista.map(c=>[mesTxt(c.mes),c.cliente,num(c.fijos),num(c.extras),num(c.entra),num(c.mo),num(c.queda),num(c.mat),c.ord]),'Sin datos.'));
-   out.push(card('Cuotas fijas',['Cliente','Concepto','Al mes sin IVA','IVA','Con IVA','Desde','Hasta','Estado',''],
-     (ING.fijos||[]).map(f=>{ const an=!!f.anulado_en, acc=el('span'); if(!an) acc.append(ingMini('Corregir',()=>ingAbrir('fijo',f)),ingMini('Importe de un mes',()=>ingAbrir('mes',{f})),ingMini('Anular',()=>ingAbrir('anular',{que:'fijo',id:f.id,titulo:f.cliente+' · '+f.concepto})));
-       return [f.cliente,f.concepto,eur(f.importe_mensual),Number(f.iva_pct)+' %',eur(Number(f.importe_mensual)*(1+Number(f.iva_pct)/100)),fechaTxt(f.desde),f.hasta?fechaTxt(f.hasta):'vigente',
-         an?badge('Anulada','no'):badge(f.hasta&&f.hasta<todayStr()?'Terminada':'Vigente','ok'),an?el('span',null,f.anulado_motivo||''):acc] }),'Aún no hay ninguna cuota anotada. Pulsa «Añadir cuota fija».'));
-   const aj=(ING.meses||[]); if(aj.length){ const porId={}; (ING.fijos||[]).forEach(f=>porId[f.id]=f);
-     out.push(card('Meses con importe anotado (factura o ajuste)',['Cliente','Cuota','Mes','Importe real','Motivo'],aj.map(m=>{ const f=porId[m.fijo_id]||{cliente:'—',concepto:'—'}; return [f.cliente,f.concepto,mesTxt(String(m.mes).slice(0,7)),eur(m.importe),m.motivo] }))) }
-   out.push(card('Ingresos extra',['Fecha','Cliente','Trabajo facturado','Sin IVA','IVA','Con IVA','Orden','Factura','Estado',''],
-     (ING.extras||[]).map(x=>{ const an=!!x.anulado_en, acc=el('span'); if(!an) acc.append(ingMini('Corregir',()=>ingAbrir('extra',x)),ingMini('Anular',()=>ingAbrir('anular',{que:'extra',id:x.id,titulo:x.cliente+' · '+x.concepto+' · '+eur(x.importe)})));
-       return [fechaTxt(x.fecha),x.cliente,x.concepto,eur(x.importe),Number(x.iva_pct)+' %',eur(Number(x.importe)*(1+Number(x.iva_pct)/100)),x.orden_ref?'AMJ-'+x.orden_ref:'—',x.numero_factura||'—',an?badge('Anulado','no'):badge('Cuenta','ok'),an?el('span',null,x.anulado_motivo||''):acc] }),'Aún no hay ningún extra anotado. Pulsa «Añadir ingreso extra».'));
-   const cobs=(ING.cobros||[]); if(cobs.length){ const pF={}, pX={}; (ING.fijos||[]).forEach(f=>pF[f.id]=f); (ING.extras||[]).forEach(x=>pX[x.id]=x);
-     out.push(card('Cobros anotados',['Fecha del cobro','Importe','De qué','Referencia','Notas','Estado',''],
-       cobs.slice().reverse().map(c=>{ const an=!!c.anulado_en, f=pF[c.fijo_id], x=pX[c.extra_id];
-         const de=c.tipo==='fijo'?(f?f.cliente+' · '+f.concepto+' · '+mesTxt(String(c.mes).slice(0,7)):'—'):(x?x.cliente+' · '+(x.numero_factura?'factura '+x.numero_factura:x.concepto):'—');
-         return [c.fecha?fechaTxt(c.fecha):'Sin anotar',eur(c.importe),de,c.referencia||'—',c.notas||'—',an?badge('Anulado','no'):badge('Cuenta','ok'),
-           an?el('span',null,c.anulado_motivo||''):ingMini('Anular cobro',()=>ingAbrir('anular',{que:'cobro',id:c.id,titulo:'cobro de '+eur(c.importe)+' · '+de}))] }))) }
+   CL.forEach(C=>out.push(finBloque(C)));
+   if(!CL.length) out.push(el('div','empty','Todavía no hay ningún cliente con cuota, extras ni órdenes.'));
    return out }],
  pagos:['Pagos a técnicos',()=>{
    if(!P) return [el('div','empty','Cargando pagos…')];
