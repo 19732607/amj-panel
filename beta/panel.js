@@ -803,7 +803,8 @@ function finBloque(C){
     const kc=card('Cobros anotados',['Fecha','Importe','De qué','Referencia',''],cobs.slice().reverse().map(k=>{ const de=tit[(k.tipo==='fijo'?k.fijo_id:k.extra_id)+'|'+(k.tipo==='fijo'?String(k.mes).slice(0,7):'')]||'—';
       return [k.fecha?fechaTxt(k.fecha):'Sin fecha',eur(k.importe),de,k.referencia||'—',ingMini('Anular cobro',()=>ingAbrir('anular',{que:'cobro',id:k.id,titulo:'cobro de '+eur(k.importe)+' · '+de}))] }));
     c.append(kc.querySelector('h3'),kc.querySelector('table')) }
-  const cc=card('Lo que cuesta en el periodo',['Órdenes hechas por técnicos','Mano de obra sin IVA','Materiales','Pendiente de pagar a técnicos'],[[cost.length,eur(mo),eur(mat),eur(pt)]]);
+  const ptAntes=C.costes.filter(x=>dayOf(x.finished_at)<d0).reduce((t,x)=>t+Number(x.pending_gross||0),0);
+  const cc=card('Lo que cuesta en el periodo',['Órdenes hechas por técnicos','Mano de obra sin IVA','Materiales','Pendiente de pagar a técnicos (este periodo)','Pendiente de pagar a técnicos (periodos anteriores)'],[[cost.length,eur(mo),eur(mat),eur(pt),eur(ptAntes)]]);
   c.append(cc.querySelector('h3'),cc.querySelector('table'));
   return c }
 /* COBROS (27/11): lo facturado y lo cobrado viven en tablas distintas. Un cobro es dinero que entra, IVA incluido. */
@@ -1149,6 +1150,10 @@ const SECS={
    if(ingMsg){ const a=el('div','card'), t=el('div',null,ingMsg); t.style.cssText='font-weight:600'; a.append(t); out.push(a) }
    const clientes=[...new Set([...(ING.clientes||[]),...(ING.fijos||[]).map(f=>f.cliente),...(ING.extras||[]).map(x=>x.cliente)])].sort((a,b)=>a.localeCompare(b));
    const form=ingPanel(clientes); if(form) out.push(form);
+   /* Control: ninguna orden con coste puede quedarse fuera de un cliente sin que se vea. */
+   const conFicha=new Set(CL.map(C=>C.cod)), refCl={}; O.forEach(o=>{ refCl[Number(o.ref)]=o.test?null:clName(o.cl) });
+   const huerf=(P||[]).filter(x=>x.finished_at&&!/prueba|NO ASIGNAR/i.test(x.technician||'')&&refCl[Number(x.reference)]&&!conFicha.has(refCl[Number(x.reference)])&&Number(x.labor_total||0)+Number(x.materials_total||0)>0);
+   if(huerf.length){ const t=el('div','card'), m=el('div',null,'⚠ Hay '+huerf.length+' orden(es) con coste de técnicos de clientes sin ficha ('+[...new Set(huerf.map(x=>refCl[Number(x.reference)]))].join(', ')+'): '+eur(huerf.reduce((a,x)=>a+Number(x.labor_total||0),0)/1.21)+' de mano de obra sin IVA. Da de alta la ficha del cliente para que tenga su bloque.'); m.style.cssText='font-weight:600;color:var(--no,#b4232a)'; t.append(m); out.push(t) }
    CL.forEach(C=>out.push(finBloque(C)));
    if(!CL.length) out.push(el('div','empty','Todavía no hay ningún cliente con cuota, extras ni órdenes.'));
    return out }],
