@@ -761,6 +761,13 @@ function finDatos(){
       items.push({clase:'fijo',ref:f.id,mes:m,orden:fin,cierre:fin,cuando:'Cuota de '+mesTxt(m),tipo:'Tarifa plana',concepto:f.concepto,base:r.imp,tot,cob,pend:ingR2(tot-cob),fac,ffac:mr.fecha_factura||null,doc:fac||'—',e,titulo:cod+' · '+f.concepto+' · '+mesTxt(m)}) } });
     X.filter(x=>x.cliente===cod).forEach(x=>{ const tot=ingR2(Number(x.importe)*(1+Number(x.iva_pct)/100)), cob=ingR2(cobX[x.id]||0), fac=x.numero_factura||null;
       items.push({clase:'extra',ref:x.id,mes:null,fecha:String(x.fecha),orden:String(x.fecha),cuando:fechaTxt(x.fecha),tipo:'Extra',concepto:x.concepto+(x.orden_ref?' · AMJ-'+x.orden_ref:''),base:Number(x.importe),tot,cob,pend:ingR2(tot-cob),fac,ffac:x.fecha_factura||null,doc:fac||'—',e:est(tot,fac,cob),titulo:cod+' · '+x.concepto,x}) });
+    /* Órdenes con presupuesto aceptado o urgencia (misma regla que el informe mensual): mientras no estén en Ingresos con su orden,
+       salen como «pendiente de facturación»; al anotar la factura se crean como ingreso extra con esa orden. */
+    if(CTX){ const refsX=new Set(X.filter(x=>x.cliente===cod).map(x=>Number(x.orden_ref)).filter(Boolean));
+      real().forEach(o=>{ const x=CTX[o.id], c=repCli(o); if(!x||!c||clName(c)!==cod||o.st!=='completed'||!o.fa||x.presupuesto_estado!=='aceptado'||x.presupuesto_importe==null||refsX.has(Number(o.ref))) return;
+        const b=Number(x.presupuesto_importe), tot=Math.round(b*121)/100, f=dayOf(o.fa), tipo=x.urgente?'Urgencia':x.fuera_horario?'Fuera de horario':'Presupuesto';
+        items.push({clase:'ord',ref:'orden:'+o.ref,mes:null,fecha:f,orden:f,cuando:fechaTxt(f),tipo,concepto:'AMJ-'+o.ref+' · '+(o.work||'').replace(/\.$/,'')+' · '+finPiso(o),
+          base:b,tot,cob:0,pend:tot,fac:null,ffac:null,doc:'—',e:'pf',titulo:cod+' · AMJ-'+o.ref+' · '+tipo,cod,d1:f,oref:Number(o.ref),texto:tipo+' · '+(o.work||'').replace(/\.$/,'')+' · '+finPiso(o)}) }) }
     /* Materiales del cliente por periodo de cierre (desde octubre de 2026, inicio del piloto). Si ya se anotó su factura, sale como extra. */
     for(let m='2026-10'; m<=hoyM; m=mesMas(m,1)){ const [p0,p1]=finPer(dia,m), tag='materiales:'+cod+':'+m;
       if(X.some(x=>x.cliente===cod&&String(x.notas||'').includes(tag))) continue;
@@ -774,6 +781,7 @@ function finDatos(){
 /* 28/11/2026 (Antonio: «¿dónde están los materiales que me tienen que pagar?»): los materiales de las órdenes del cliente
    en su periodo se le facturan a precio de compra (base del ticket) + 21 % de IVA. Mismo cálculo que el informe del Panel (repMat):
    lo que llegó tarde a un periodo cerrado lo asume AMJ y no sale; lo ya informado sale por el importe informado. */
+const finPiso=o=>(o.piso||o.ad||'—').replace(/^(ENSO|HELP)-/,'');
 function finMat(cod,d0,d1){ if(!CTX||!HILO) return null; const O2=real().filter(o=>{ const c=repCli(o); return c&&clName(c)===cod&&o.st==='completed'&&o.fa&&dayOf(o.fa)>=d0&&dayOf(o.fa)<=d1 });
   let base=0,iva=0; const refs=[]; O2.forEach(o=>{ repMat(o).forEach(l=>{ base+=l.subtotal; iva+=l.iva; refs.push('AMJ-'+o.ref) }) });
   return {base:Math.round(base*100)/100, iva:Math.round(iva*100)/100, refs:[...new Set(refs)]} }
@@ -873,8 +881,10 @@ async function ingEnviar(){ const f=ingForm; let nombre, args, hecho;
   else if(f.tipo==='factura'){
     if(!f.factura.trim()) return ingFallo('Escribe el número de factura, por ejemplo 075/26/57.');
     if(!f.fecha) return ingFallo('Pon la fecha de la factura.'); if(f.fecha>hoyISO()) return ingFallo('La fecha de la factura no puede ser futura.');
-    if(f.que==='mat'){ const id=crypto.randomUUID(), it=f.item; ingBusy=true; renderSec();
-      rpcW('amj_admin_ingreso_extra_guardar',{p_id:id,p_cliente:it.cod,p_fecha:it.d1,p_concepto:'Materiales del '+it.titulo.split('materiales ')[1]+' (a precio de compra)',p_importe:it.base,p_iva:21,p_orden:null,p_factura:f.factura.trim(),p_notas:it.ref+' · '+it.refs.join(', ')})
+    if(f.que==='mat'||f.que==='ord'){ const id=crypto.randomUUID(), it=f.item; ingBusy=true; renderSec();
+      const args0=f.que==='mat'?{p_id:id,p_cliente:it.cod,p_fecha:it.d1,p_concepto:'Materiales del '+it.titulo.split('materiales ')[1]+' (a precio de compra)',p_importe:it.base,p_iva:21,p_orden:null,p_factura:f.factura.trim(),p_notas:it.ref+' · '+it.refs.join(', ')}
+        :{p_id:id,p_cliente:it.cod,p_fecha:it.d1,p_concepto:it.texto,p_importe:it.base,p_iva:21,p_orden:it.oref,p_factura:f.factura.trim(),p_notas:'Presupuesto aceptado en la app (AMJ-'+it.oref+')'};
+      rpcW('amj_admin_ingreso_extra_guardar',args0)
         .then(()=>rpcW('amj_admin_ingreso_facturar',{p_tipo:'extra',p_ref:id,p_mes:null,p_factura:f.factura.trim(),p_fecha:f.fecha}))
         .then(()=>{ ingMsg='Facturado: '+f.titulo+' · factura '+f.factura.trim()+'.'; ingForm=null; return rpc('amj_admin_ingresos',{}).then(r=>{ ING=r }) })
         .catch(e=>{ f.error=ingErrTxt((e&&e.message)||'') }).finally(()=>{ ingBusy=false; renderSec() }); return }
