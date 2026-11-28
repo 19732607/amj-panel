@@ -86,8 +86,8 @@ let CTX, ctxP=null;
 /* El hilo (servidor): por orden, lo que ya se informó en un periodo cerrado y lo que llegó tarde. Regla de Antonio (27/11/2026):
    un periodo cerrado es un periodo cerrado; lo que llega tarde lo asume AMJ y no se cobra después al cliente. */
 let HILO, hiloP=null;
-function repHilo(){ if(HILO!==undefined||hiloP) return; hiloP=rpc('amj_admin_hilo',{p_desde:'2026-01-01',p_hasta:todayStr()}).then(a=>{ HILO={}; ((a&&a.ordenes)||[]).forEach(x=>HILO[x.ref]=x) }).catch(()=>{ HILO=null }).finally(()=>{ hiloP=null; if(sec==='informes') renderSec() }) }
-function repCtx(){ if(CTX!==undefined||ctxP) return; ctxP=rpc('amj_admin_informe_ordenes',{}).then(a=>{ CTX={}; (a||[]).forEach(x=>CTX[x.id]=x) }).catch(()=>{ CTX=null }).finally(()=>{ ctxP=null; if(sec==='informes') renderSec() }) }
+function repHilo(){ if(HILO!==undefined||hiloP) return; hiloP=rpc('amj_admin_hilo',{p_desde:'2026-01-01',p_hasta:todayStr()}).then(a=>{ HILO={}; ((a&&a.ordenes)||[]).forEach(x=>HILO[x.ref]=x) }).catch(()=>{ HILO=null }).finally(()=>{ hiloP=null; if(sec==='informes'||sec==='ingresos') renderSec() }) }
+function repCtx(){ if(CTX!==undefined||ctxP) return; ctxP=rpc('amj_admin_informe_ordenes',{}).then(a=>{ CTX={}; (a||[]).forEach(x=>CTX[x.id]=x) }).catch(()=>{ CTX=null }).finally(()=>{ ctxP=null; if(sec==='informes'||sec==='ingresos') renderSec() }) }
 /* Misma definición que el servidor (vista v_kpi_ordenes): la orden se cerró sin poder ejecutar el trabajo. */
 const sinEjecTxt=o=>/^\s*VISITA REALIZADA SIN POSIBILIDAD/i.test(o.report||'')||/no eh podido|no he podido|no fue posible|no se pudo|no ha sido posible/i.test(o.report||'');
 /* Fuente: v_kpi_ordenes.sin_ejecucion, que llega con el contexto del servidor; la regla de texto solo se usa mientras ese contexto no ha llegado. */
@@ -761,20 +761,34 @@ function finDatos(){
       items.push({clase:'fijo',ref:f.id,mes:m,orden:fin,cierre:fin,cuando:'Cuota de '+mesTxt(m),tipo:'Tarifa plana',concepto:f.concepto,base:r.imp,tot,cob,pend:ingR2(tot-cob),fac,ffac:mr.fecha_factura||null,doc:fac||'—',e,titulo:cod+' · '+f.concepto+' · '+mesTxt(m)}) } });
     X.filter(x=>x.cliente===cod).forEach(x=>{ const tot=ingR2(Number(x.importe)*(1+Number(x.iva_pct)/100)), cob=ingR2(cobX[x.id]||0), fac=x.numero_factura||null;
       items.push({clase:'extra',ref:x.id,mes:null,fecha:String(x.fecha),orden:String(x.fecha),cuando:fechaTxt(x.fecha),tipo:'Extra',concepto:x.concepto+(x.orden_ref?' · AMJ-'+x.orden_ref:''),base:Number(x.importe),tot,cob,pend:ingR2(tot-cob),fac,ffac:x.fecha_factura||null,doc:fac||'—',e:est(tot,fac,cob),titulo:cod+' · '+x.concepto,x}) });
+    /* Materiales del cliente por periodo de cierre (desde octubre de 2026, inicio del piloto). Si ya se anotó su factura, sale como extra. */
+    for(let m='2026-10'; m<=hoyM; m=mesMas(m,1)){ const [p0,p1]=finPer(dia,m), tag='materiales:'+cod+':'+m;
+      if(X.some(x=>x.cliente===cod&&String(x.notas||'').includes(tag))) continue;
+      const fm=finMat(cod,p0,p1); if(!fm||!(fm.base>0)) continue; const tot=Math.round((fm.base+fm.iva)*100)/100;
+      items.push({clase:'mat',ref:tag,mes:m,orden:p1,cierre:p1,cuando:'Materiales '+fechaTxt(p0).slice(0,5)+'–'+fechaTxt(p1).slice(0,5),tipo:'Materiales',
+        concepto:'Materiales de las órdenes del periodo, a precio de compra (sin recargo) · '+fm.refs.join(', '),base:fm.base,tot,cob:0,pend:tot,fac:null,ffac:null,doc:'—',
+        e:p1>=todayStr()?'pr':'pf',titulo:cod+' · materiales '+fechaTxt(p0)+'–'+fechaTxt(p1),refs:fm.refs,cod,d1:p1}) }
     items.sort((a,b)=>b.orden.localeCompare(a.orden));
     const costes=(P||[]).filter(x=>x.finished_at&&!/prueba|NO ASIGNAR/i.test(x.technician||'')&&refCl[Number(x.reference)]===cod);
     return {cod,fi,dia,hoyM,items,costes} }) }
+/* 28/11/2026 (Antonio: «¿dónde están los materiales que me tienen que pagar?»): los materiales de las órdenes del cliente
+   en su periodo se le facturan a precio de compra (base del ticket) + 21 % de IVA. Mismo cálculo que el informe del Panel (repMat):
+   lo que llegó tarde a un periodo cerrado lo asume AMJ y no sale; lo ya informado sale por el importe informado. */
+function finMat(cod,d0,d1){ if(!CTX||!HILO) return null; const O2=real().filter(o=>{ const c=repCli(o); return c&&clName(c)===cod&&o.st==='completed'&&o.fa&&dayOf(o.fa)>=d0&&dayOf(o.fa)<=d1 });
+  let base=0,iva=0; const refs=[]; O2.forEach(o=>{ repMat(o).forEach(l=>{ base+=l.subtotal; iva+=l.iva; refs.push('AMJ-'+o.ref) }) });
+  return {base:Math.round(base*100)/100, iva:Math.round(iva*100)/100, refs:[...new Set(refs)]} }
 function finFila(i){ const acc=el('span');
   if(i.e==='pf'||i.e==='pr') acc.append(ingMini('Anotar factura',()=>ingAbrir('factura',i)));
   if(i.e==='fp'||i.e==='fx') acc.append(ingMini('Anotar cobro',()=>ingAbrir('cobro',i)));
+  if(i.clase==='mat'&&i.refs&&i.refs.length) acc.append(el('span','muted',' '+i.refs.length+' órdenes'));
   if(i.clase==='extra') acc.append(ingMini('Corregir',()=>ingAbrir('extra',i.x)),ingMini('Anular',()=>ingAbrir('anular',{que:'extra',id:i.x.id,titulo:i.titulo+' · '+eur(i.base)})));
   const t=FIN_TXT[i.e];
   return [i.cuando,i.tipo,i.concepto,eur(i.base),eur(i.tot),i.fac?i.fac+(i.ffac?' · '+fechaTxt(i.ffac):''):'—',badge(i.e==='pr'?t[0]+' del '+fechaTxt(i.cierre):t[0],t[1]),acc] }
 function finBloque(C){
   /* Del día siguiente al cierre a fin de mes se abre el periodo que acaba de cerrar, que es el que toca facturar. */
   const ym=finMes[C.cod]||(C.dia&&Number(todayStr().slice(8))>C.dia?mesMas(C.hoyM,-1):C.hoyM), [d0,d1]=finPer(C.dia,ym), fi=C.fi;
-  const enP=i=>i.clase==='fijo'?i.mes===ym:(i.fecha>=d0&&i.fecha<=d1);
-  const delP=C.items.filter(enP), antes=C.items.filter(i=>!enP(i)&&i.e!=='co'&&(i.clase==='fijo'?i.mes<ym:i.fecha<d0));
+  const enP=i=>i.clase==='fijo'||i.clase==='mat'?i.mes===ym:(i.fecha>=d0&&i.fecha<=d1);
+  const delP=C.items.filter(enP), antes=C.items.filter(i=>!enP(i)&&i.e!=='co'&&(i.clase==='fijo'||i.clase==='mat'?i.mes<ym:i.fecha<d0));
   const cost=C.costes.filter(x=>{ const d=dayOf(x.finished_at); return d>=d0&&d<=d1 });
   const mo=cost.reduce((t,x)=>t+Number(x.labor_total||0),0)/1.21, mat=cost.reduce((t,x)=>t+Number(x.materials_total||0),0), pt=cost.reduce((t,x)=>t+Number(x.pending_gross||0),0);
   const entra=delP.reduce((t,i)=>t+i.base,0), vis=delP.concat(antes);
@@ -791,7 +805,9 @@ function finBloque(C){
   const cuotaF=delP.filter(i=>i.clase==='fijo').reduce((t,i)=>t+i.base,0);
   const nodos=[top,src('Ficha del cliente: '+ficha.join(' · ')+'.')];
   if(Number(fi.cuota_mensual)>0&&Math.abs(cuotaF-Number(fi.cuota_mensual))>0.004) nodos.push(src('⚠ La tarifa plana de la ficha ('+eur(fi.cuota_mensual)+') no coincide con la cuota anotada en FINANCE para este periodo ('+eur(cuotaF)+'). Revisa cuál es la buena.'));
-  nodos.push(kpis([[eur(entra),'entra sin IVA en el periodo'],[eur(mo),'mano de obra de técnicos'],[eur(entra-mo),'queda'],[eur(pf),'pendiente de facturación'],[eur(pc),'pendiente de cobro']]));
+  const matT=mat/1.21;
+  nodos.push(kpis([[eur(entra),'entra sin IVA (cuota, extras y materiales)'],[eur(mo),'mano de obra de técnicos (sin IVA)'],[eur(matT),'materiales pagados a técnicos (sin IVA)'],[eur(entra-mo-matT),'queda'],[eur(pf),'pendiente de facturación'],[eur(pc),'pendiente de cobro']]));
+  if(!CTX||!HILO) nodos.push(src('Materiales: comprobando importes…'));
   const tb=c.querySelector('table'); nodos.forEach(n=>c.insertBefore(n,tb));
   const bar=el('div'); bar.style.cssText='margin:10px 0 4px'; bar.append(ingMini('＋ Extra de '+(fi.nombre||C.cod),()=>ingAbrir('extra',{soloCliente:C.cod})),ingMini('＋ Cuota fija',()=>ingAbrir('fijo',{soloCliente:C.cod}))); c.append(bar);
   if(antes.length){ const a=card('De periodos anteriores, sin facturar o sin cobrar',heads,antes.map(finFila)); const t2=a.querySelector('table'); c.append(a.querySelector('h3'),t2) }
@@ -826,7 +842,7 @@ function ingDeuda(R){ const porF={}, porX={}; (ING.cobros||[]).filter(c=>!c.anul
 const ingEstadoCobro=d=>d.pend<=0.004?badge('Cobrado','ok'):badge(d.cob>0.004?'Cobro parcial':'Pendiente de cobro','s-pending');
 function ingAbrir(tipo,dato){ ingMsg=null;
   if(dato&&dato.soloCliente){ const c=dato.soloCliente; dato=null; ingAbrir(tipo,null); ingForm.cliente=c; renderSec(); return }
-  if(tipo==='factura') ingForm={tipo,que:dato.clase,ref:dato.ref,mes:dato.mes,titulo:dato.titulo,total:dato.tot,factura:dato.fac||'',fecha:dato.ffac||hoyISO(),error:''};
+  if(tipo==='factura') ingForm={tipo,que:dato.clase,item:dato,ref:dato.ref,mes:dato.mes,titulo:dato.titulo,total:dato.tot,factura:dato.fac||'',fecha:dato.ffac||hoyISO(),error:''};
   else if(tipo==='fijo') ingForm={tipo,id:dato?dato.id:nuevoId(),nuevo:!dato,cliente:dato?dato.cliente:'',concepto:dato?dato.concepto:'Cuota mensual',importe:dato?String(dato.importe_mensual):'',iva:dato?String(Number(dato.iva_pct)):'21',desde:dato?dato.desde:'',hasta:dato&&dato.hasta?dato.hasta:'',notas:dato&&dato.notas?dato.notas:'',error:''};
   else if(tipo==='extra') ingForm={tipo,id:dato?dato.id:nuevoId(),nuevo:!dato,cliente:dato?dato.cliente:'',fecha:dato?dato.fecha:hoyISO(),concepto:dato?dato.concepto:'',importe:dato?String(dato.importe):'',iva:dato?String(Number(dato.iva_pct)):'21',orden:dato&&dato.orden_ref?String(dato.orden_ref):'',factura:dato&&dato.numero_factura?dato.numero_factura:'',notas:dato&&dato.notas?dato.notas:'',error:''};
   else if(tipo==='mes') ingForm={tipo,f:dato.f,mes:dato.m||todayStr().slice(0,7),importe:dato.imp!=null?String(dato.imp):'',motivo:'',error:''};
@@ -857,6 +873,11 @@ async function ingEnviar(){ const f=ingForm; let nombre, args, hecho;
   else if(f.tipo==='factura'){
     if(!f.factura.trim()) return ingFallo('Escribe el número de factura, por ejemplo 075/26/57.');
     if(!f.fecha) return ingFallo('Pon la fecha de la factura.'); if(f.fecha>hoyISO()) return ingFallo('La fecha de la factura no puede ser futura.');
+    if(f.que==='mat'){ const id=crypto.randomUUID(), it=f.item; ingBusy=true; renderSec();
+      rpcW('amj_admin_ingreso_extra_guardar',{p_id:id,p_cliente:it.cod,p_fecha:it.d1,p_concepto:'Materiales del '+it.titulo.split('materiales ')[1]+' (a precio de compra)',p_importe:it.base,p_iva:21,p_orden:null,p_factura:f.factura.trim(),p_notas:it.ref+' · '+it.refs.join(', ')})
+        .then(()=>rpcW('amj_admin_ingreso_facturar',{p_tipo:'extra',p_ref:id,p_mes:null,p_factura:f.factura.trim(),p_fecha:f.fecha}))
+        .then(()=>{ ingMsg='Facturado: '+f.titulo+' · factura '+f.factura.trim()+'.'; ingForm=null; return rpc('amj_admin_ingresos',{}).then(r=>{ ING=r }) })
+        .catch(e=>{ f.error=ingErrTxt((e&&e.message)||'') }).finally(()=>{ ingBusy=false; renderSec() }); return }
     nombre='amj_admin_ingreso_facturar'; args={p_tipo:f.que,p_ref:f.ref,p_mes:f.mes?f.mes+'-01':null,p_factura:f.factura.trim(),p_fecha:f.fecha};
     hecho='Facturado: '+f.titulo+' · factura '+f.factura.trim()+'.' }
   else if(f.tipo==='cobro'){
@@ -1140,7 +1161,7 @@ const SECS={
        .sort((a,b)=>b.n-a.n||a.c.localeCompare(b.c));
      out.push(card(clName(g.cl)+' · '+g.ci+' · '+P_.length+(P_.length===1?' inmueble':' inmuebles')+' · '+conOrd+' con órdenes',['Piso','Dirección','Ciudad','Órdenes','Terminadas','Abiertas','Horas','Última'],rows)) });
    return out }],
- ingresos:['FINANCE · por cliente',()=>{ if(!ING) return [el('div','empty','Cargando FINANCE…')];
+ ingresos:['FINANCE · por cliente',()=>{ if(!ING) return [el('div','empty','Cargando FINANCE…')]; repCtx(); repHilo();
    const out=[], CL=finDatos();
    /* Resumen: una tarjeta por cliente con lo que tiene pendiente; nunca un total que mezcle clientes. */
    out.push(kpis(CL.map(C=>{ const pf=C.items.filter(i=>i.e==='pf').reduce((t,i)=>t+i.tot,0), pc=C.items.filter(i=>i.e==='fp'||i.e==='fx').reduce((t,i)=>t+i.pend,0), nom=C.fi.nombre||C.cod;
