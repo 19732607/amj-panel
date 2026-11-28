@@ -1012,7 +1012,7 @@ function payInforme(tec,rt){
 const real=()=>O.filter(o=>!o.test);
 const daysAgo=s=>s?(Date.now()-new Date(s))/864e5:Infinity;
 const fmtD=s=>s?new Date(s).toLocaleDateString('es-ES',{timeZone:TZ,day:'2-digit',month:'2-digit'}):'—';
-const clName=c=>c==='HELP'?'HELPHOUSING':c;
+const clName=c=>c==='HELP'?'HELPHOUSING':(c||'');
 function kpis(list){ const w=el('div','kp'); list.forEach(([v,l])=>{ const k=el('div','k'); k.append(el('b',null,v),el('span',null,l)); w.append(k) }); return w }
 function card(title,head,rows,emptyTxt){ const c=el('div','card'); c.append(el('h3',null,title));
   const tb=el('table'), th=el('tr'); head.forEach(h=>th.append(el('th',null,h))); const thead=el('thead'); thead.append(th); tb.append(thead);
@@ -1165,7 +1165,7 @@ const SECS={
    if(QN){ const a=repDay.slice(0,8); if(+repDay.slice(8)<=15){ d0=a+'01'; d1=a+'15' } else { d0=a+'16'; d1=addD(addD(a+'28',4).slice(0,8)+'01',-1) } }
    const fd=(d,o)=>new Date(d+'T12:00:00').toLocaleDateString('es-ES',o);
    const per=MS?(m=>m.charAt(0).toUpperCase()+m.slice(1))(fd(d1,{month:'long',year:'numeric'}))+' · del '+fd(d0,{day:'numeric',month:'long'})+' al '+fd(d1,{day:'numeric',month:'long'}):WK?((QN?(d0.slice(8)==='01'?'1.ª':'2.ª')+' quincena · del ':'Semana del ')+fd(d0,{day:'numeric',month:'long'})+' al '+fd(d1,{day:'numeric',month:'long',year:'numeric'})):(()=>{ const f=fd(repDay,{weekday:'long',day:'numeric',month:'long',year:'numeric'}); return f.charAt(0).toUpperCase()+f.slice(1) })();
-   const dcL=d1>todayStr()?todayStr():d1, LA=real().filter(o=>{ if(repCl&&repCli(o)!==repCl) return false; const c=repCierreAl(o,dcL); return !!c&&repEstadoAl(o,dcL)!=='cancelada'&&dayOf(c.t)>=d0&&dayOf(c.t)<=dcL }).map(o=>{ const c=repCierreAl(o,dcL); return c.t===o.fa?o:Object.assign({},o,{fa:c.t}) }).sort((x,y)=>new Date(x.fa)-new Date(y.fa)||x.ref-y.ref);
+   const dcL=d1>todayStr()?todayStr():d1, LA=real().filter(o=>{ if(!repCli(o)) return false; /* orden fuera de cliente (p. ej. AMJ-423): no va en ningún informe */ if(repCl&&repCli(o)!==repCl) return false; const c=repCierreAl(o,dcL); return !!c&&repEstadoAl(o,dcL)!=='cancelada'&&dayOf(c.t)>=d0&&dayOf(c.t)<=dcL }).map(o=>{ const c=repCierreAl(o,dcL); return c.t===o.fa?o:Object.assign({},o,{fa:c.t}) }).sort((x,y)=>new Date(x.fa)-new Date(y.fa)||x.ref-y.ref);
    /* también los clientes con actividad anterior aunque no tengan cierres en el periodo: su informe (a cero) debe poder consultarse */
    const wcl=[...new Set((WK?real().filter(o=>(repCli(o)==='HELP'||repCli(o)==='ENSO')&&o.st!=='cancelled'&&dayOf(o.ca)<=d1&&(!repCl||repCli(o)===repCl)):LA).map(o=>repCli(o)).concat(LA.map(o=>repCli(o))))].sort((x,y)=>clName(x).localeCompare(clName(y)));
    selN=()=>WK?wcl.filter(c=>repSelW.has(c)).length:LA.filter(o=>repSel.has(o.id)).length;
