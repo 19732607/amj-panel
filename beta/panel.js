@@ -1141,8 +1141,10 @@ const SECS={
    return out }],
  ingresos:['FINANCE · por cliente',()=>{ if(!ING) return [el('div','empty','Cargando FINANCE…')];
    const out=[], CL=finDatos();
-   const all=CL.flatMap(C=>C.items), pf=all.filter(i=>i.e==='pf').reduce((t,i)=>t+i.tot,0), pc=all.filter(i=>i.e==='fp'||i.e==='fx').reduce((t,i)=>t+i.pend,0);
-   out.push(kpis([[eur(pf),'pendiente de facturación (todos los clientes)'],[eur(pc),'facturado y pendiente de cobro'],[CL.length,CL.length===1?'cliente':'clientes']]));
+   /* Resumen: una tarjeta por cliente con lo que tiene pendiente; nunca un total que mezcle clientes. */
+   out.push(kpis(CL.map(C=>{ const pf=C.items.filter(i=>i.e==='pf').reduce((t,i)=>t+i.tot,0), pc=C.items.filter(i=>i.e==='fp'||i.e==='fx').reduce((t,i)=>t+i.pend,0), nom=C.fi.nombre||C.cod;
+     if(pf<0.005&&pc<0.005) return ['Al día',nom+': nada pendiente de facturar ni de cobrar'];
+     return [eur(pf+pc),nom+': '+[pf>=0.005?eur(pf)+' pendiente de facturación':'',pc>=0.005?eur(pc)+' pendiente de cobro':''].filter(Boolean).join(' · ')] })));
    out.push(src('Cada cliente va por separado y sale de su ficha: tarifa plana, cupo, tarifas y día de cierre. La cuota va por el periodo de cierre del cliente; los extras se facturan cuando se quiera. Cada anotación pasa por tres estados: pendiente de facturación → facturado → cobrado. Base = sin IVA.'));
    if(ingMsg){ const a=el('div','card'), t=el('div',null,ingMsg); t.style.cssText='font-weight:600'; a.append(t); out.push(a) }
    const clientes=[...new Set([...(ING.clientes||[]),...(ING.fijos||[]).map(f=>f.cliente),...(ING.extras||[]).map(x=>x.cliente)])].sort((a,b)=>a.localeCompare(b));
